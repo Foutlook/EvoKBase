@@ -4,11 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { handleEvent, eventRecord } from '../templates/codex/knowledge-flow.mjs';
 
-test('普通消息注入查询及评审要求，不主动阻止消息或访问模型', () => {
+test('消息只注入范围判断与复用规则，不由处理器分类或启动角色', () => {
   for (const prompt of ['继续', '你好', '读取规则', '停止']) {
     const output = handleEvent({ hook_event_name: 'UserPromptSubmit', prompt });
     assert.match(output.hookSpecificOutput.additionalContext, /knowledge_retriever/);
     assert.match(output.hookSpecificOutput.additionalContext, /knowledge_reviewer/);
+    assert.match(output.hookSpecificOutput.additionalContext, /仅业务分析、业务开发或用户明确要求查询知识库时调用/);
+    assert.match(output.hookSpecificOutput.additionalContext, /普通问答、聊天、文档润色和非业务配置维护直接跳过查询与评审，不启动知识子 Agent/);
+    assert.match(output.hookSpecificOutput.additionalContext, /已有查询覆盖且任务范围未变时复用结果/);
+    assert.match(output.hookSpecificOutput.additionalContext, /仅对第 1 条适用范围内的任务/);
+    assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /每条普通用户消息先调用/);
     assert.match(output.hookSpecificOutput.additionalContext, /取消、停止、撤销授权优先立即执行/);
     assert.equal(output.decision, undefined);
   }
