@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const protocol = `个人知识库流程（仅适用于主 Agent）：
+export const protocol = `知识库流程（仅适用于主 Agent，适用于团队或个人）：
 本流程通过安装时确认启用，要求通过两个子 Agent 完成知识查询与候选评审，不依赖 AGENTS.md 调度。
 1. 每条普通用户消息先调用 knowledge_retriever，包括“继续”和简单问题。传入用户原话、必要上下文、当前任务与工作项目；由子 Agent 判断是否需要实际检索。取消、停止、撤销授权优先立即执行，不等待查询。
 2. 使用宿主原生子 Agent 调用工具，选择角色 knowledge_retriever；不得用创建独立任务、嵌套 codex exec 或主 Agent 自行查询冒充子 Agent 执行。角色或工具不可用时明确报告，不声称已调用。
