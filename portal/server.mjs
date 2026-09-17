@@ -3,11 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLibrary, types, failure } from './library.mjs';
+import { createSearch } from './search.mjs';
 
 const web = fileURLToPath(new URL('./web/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
 export async function startPortal(config, port = 4317) {
   const library = await createLibrary(config);
+  const search = createSearch(config.gbrain, library);
   const server = http.createServer(async (req, res) => {
     const authority = `127.0.0.1:${server.address().port}`;
     const origin = `http://${authority}`;
@@ -26,6 +28,8 @@ export async function startPortal(config, port = 4317) {
       }
       let result;
       if (url.pathname === '/api/tree') result = await library.list();
+      else if (url.pathname === '/api/search') result = await search.search(url.searchParams.get('q'));
+      else if (url.pathname === '/api/search/page') result = await search.indexed(url.searchParams.get('slug'));
       else if (url.pathname === '/api/graph') result = await library.graph(url.searchParams.get('path') ?? undefined);
       else if (url.pathname === '/api/document') result = await library.document(url.searchParams.get('path'));
       else if (url.pathname === '/api/attachment') {

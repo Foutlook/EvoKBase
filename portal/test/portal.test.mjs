@@ -4,11 +4,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { startPortal } from '../server.mjs';
 import { createLibrary, resolveLink } from '../library.mjs';
 import * as d3 from 'd3';
 import { createLayout } from '../web/graph.js';
+import { createSearch, pathSlug } from '../search.mjs';
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'evokbase-p1-'));
@@ -195,4 +197,123 @@ test('文件头无效或使用 YAML 别名时不猜引用，正文仍能形成�
   assert.equal((await fetch(base + '/api/graph?path=../outside.md')).status, 404);
   assert.equal((await fetch(base + '/api/graph', {method:'POST'})).status, 405);
   assert.equal((await fetch(base + '/api/graph', {headers:{Origin:'https://example.com'}})).status, 403);
+});
+
+test('GBrain 只读搜索保留参数和顺序，核对来源、路径、版本与不可用隔离', async t => {
+  const { root, config } = await fixture(t);
+  await fs.writeFile(path.join(root, '甲/Café.md'), '# 一致正文');
+  await fs.writeFile(path.join(root, '甲/Cafe!.md'), '# 冲突正文');
+  await fs.writeFile(path.join(root, '乙/旧身份.md'), '---\nslug: 乙/旧身份\n---\n# 旧身份');
+  const pages = {
+    '中文-空格/文章': { compiled_truth: '# 示例\n\n## 小节 标题\n\n最新正文。\n\n[返回](../首页.md)\n\n[[#小节 标题]]' },
+    '首页': { compiled_truth: '# 较早的索引正文' },
+    '秘密/不展示': { compiled_truth: '# 展示范围外' },
+    '甲/cafe': { compiled_truth: '# 一致正文' },
+    '乙/旧身份': { compiled_truth: '# 旧身份' },
+    '其他来源': { compiled_truth: '# 其他来源', source_id: 'other' },
+    '片段不符': { compiled_truth: '# 已更新' },
+  };
+  const hits = Object.entries(pages).map(([slug, page]) => ({ slug, title: '<img onerror=alert(1)> ' + slug, chunk: slug === '片段不符' ? '旧片段' : page.compiled_truth, evidence: 'keyword_exact' }));
+  hits[0].chunk = hits[0].chunk.replace(/\n\n/g, '\n');
+  let mode = 'sse'; const calls = [];
+  const upstream = http.createServer(async (req, res) => {
+    const chunks = []; for await (const part of req) chunks.push(part);
+    const message = JSON.parse(Buffer.concat(chunks)); calls.push(message);
+    if (mode === 'offline') { res.writeHead(503); res.end('private endpoint and internal credentials'); return; }
+    if (mode === 'timeout') return;
+    let data;
+    if (message.params.name === 'recall') data = { results: mode === 'empty' ? [] : hits, facts: [{text:'not part of page search'}], search_degraded: mode === 'degraded' ? 'keyword-only' : undefined };
+    else {
+      assert.equal(message.params.name, 'get_page');
+      assert.deepEqual(Object.keys(message.params.arguments).sort(), ['include_content', 'slug', 'source_id']);
+      assert.equal(message.params.arguments.source_id, 'fixture-source');
+      const slug = message.params.arguments.slug;
+      data = { slug, source_id: 'fixture-source', updated_at: '2026-01-01T00:00:00Z', content_hash: 'index-hash', content: pages[slug]?.compiled_truth, ...pages[slug] };
+    }
+    const envelope = JSON.stringify({jsonrpc:'2.0', id:1, result:{content:[{type:'text', text:JSON.stringify(data)}]}});
+    res.writeHead(200, {'Content-Type':mode === 'json' ? 'application/json' : 'text/event-stream'});
+    if (mode === 'json') res.end(envelope);
+    else { res.write(': keepalive\r\n\r\nevent: message\r\ndata: ' + envelope.slice(0, 30)); res.end(envelope.slice(30) + '\r\n\r\n'); }
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => { upstream.closeAllConnections(); return new Promise(resolve => upstream.close(resolve)); });
+  config.gbrain = { url: `http://127.0.0.1:${upstream.address().port}/mcp`, sourceId: 'fixture-source' };
+  const server = await startPortal(config, 0);
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const search = () => fetch(base + '/api/search?q=' + encodeURIComponent(' 中文 空格 '));
+  const data = await (await search()).json();
+  assert.deepEqual(calls[0].params, { name:'recall', arguments:{query:' 中文 空格 ', limit:10} });
+  assert.deepEqual(data.results.map(hit => hit.slug), hits.map(hit => hit.slug));
+  assert.equal(data.results[0].local.path, '中文 空格/文章.md');
+  assert.equal(data.results[0].local.bodyMatches, true);
+  assert.equal(data.results[1].local.bodyMatches, false);
+  assert.deepEqual(data.results.slice(2).map(hit => hit.local.status), ['outside', 'ambiguous', 'available', 'unverified', 'unverified']);
+  assert.equal(data.facts, undefined);
+  assert.equal(pathSlug('甲/Café!.md'), '甲/cafe');
+  assert.equal(pathSlug('中文 空格/README.md'), '中文-空格/readme');
+  assert.equal((await fetch(base + '/api/search/page?slug=' + encodeURIComponent('秘密/不展示'))).status, 404);
+  assert.equal((await fetch(base + '/api/search/page?slug=' + encodeURIComponent('甲/cafe'))).status, 404);
+  const page = await (await fetch(base + '/api/search/page?slug=' + encodeURIComponent('中文-空格/文章'))).json();
+  assert.equal(page.content, pages['中文-空格/文章'].compiled_truth);
+  await fs.appendFile(path.join(root, '中文 空格/文章.md'), '\n本地未发布修改');
+  mode = 'json';
+  assert.equal((await (await search()).json()).results[0].local.bodyMatches, false);
+  const beforeInvalid = calls.length;
+  for (const q of ['', ' ', 'a'.repeat(501), 'line\nbreak']) assert.equal((await fetch(base + '/api/search?q=' + encodeURIComponent(q))).status, 400);
+  assert.equal((await fetch(base + '/api/search?q=ok', {headers:{Origin:'https://example.com'}})).status, 403);
+  assert.equal((await fetch(base + '/api/search?q=ok', {method:'POST'})).status, 405);
+  assert.equal(calls.length, beforeInvalid);
+  mode = 'empty'; assert.deepEqual((await (await search()).json()).results, []);
+  mode = 'degraded'; assert.equal((await (await search()).json()).degraded, true);
+  mode = 'offline';
+  const offline = await search(); assert.equal(offline.status, 503);
+  assert.doesNotMatch(await offline.text(), /private|credentials|127\.0\.0\.1/);
+  assert.equal((await fetch(base + '/api/tree')).status, 200);
+  assert.equal((await fetch(base + '/api/document?path=' + encodeURIComponent('首页.md'))).status, 200);
+  const withoutSearch = createSearch(undefined, await createLibrary(config));
+  await assert.rejects(withoutSearch.search('query'), {status:503});
+  await assert.rejects(withoutSearch.indexed('首页'), {status:503});
+  assert.throws(() => createSearch({url:'file:///private',sourceId:'fixture-source'}, {}));
+  assert.throws(() => createSearch({url:config.gbrain.url,sourceId:'__all__'}, {}));
+  mode = 'timeout';
+  assert.equal((await search()).status, 503);
+});
+
+test('搜索页清空后刷新会移除旧查询，迟到响应不恢复旧结果', async () => {
+  // Run the real page controller against a minimal DOM; no browser library or production test hooks.
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', children: [], attributes: {},
+      setAttribute(key, value) { this.attributes[key] = value; },
+      replaceChildren(...children) { this.children = children; }, addEventListener() {} });
+    return nodes.get(id);
+  };
+  let finishSearch, searchStarted;
+  const started = new Promise(resolve => { searchStarted = resolve; });
+  const pending = new Promise(resolve => { finishSearch = resolve; });
+  const requests = [], location = { href: 'http://127.0.0.1/?view=search&q=old' };
+  const context = vm.createContext({ URL, location,
+    history: { replaceState(_state, _title, url) { location.href = String(url); } },
+    document: { getElementById: node, querySelector: node },
+    initGraph: () => ({ invalidate() {} }),
+    fetch: async url => {
+      requests.push(url);
+      if (url === '/api/tree') return {ok:true, json:async()=>({files:[],warnings:[]})};
+      searchStarted(); return pending;
+    }
+  });
+  const source = (await fs.readFile(new URL('../web/app.js', import.meta.url), 'utf8')).replace(/^import .*?;\r?\n/, '');
+  vm.runInContext(source, context);
+  await started;
+  node('query').value = '';
+  await vm.runInContext('refresh()', context);
+  assert.equal(new URL(location.href).searchParams.has('q'), false);
+  assert.equal(node('search-status').textContent, '输入内容后搜索。');
+  assert.equal(node('search-results').attributes['aria-busy'], 'false');
+  assert.equal(node('search-results').children.length, 0);
+  finishSearch({ok:true,json:async()=>({results:[],limit:10})});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(node('search-status').textContent, '输入内容后搜索。');
+  assert.equal(requests.filter(url=>url.startsWith('/api/search')).length, 1);
 });

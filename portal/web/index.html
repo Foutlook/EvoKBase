@@ -13,6 +13,7 @@
   <nav class="primary-nav" aria-label="功能导航">
     <a id="home-link" href="/?doc=%E9%A6%96%E9%A1%B5.md" aria-label="首页" title="首页" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/></svg></a>
     <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg></a>
+    <a id="search-view" href="/?view=search" aria-label="搜索知识" title="搜索知识"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></a>
   </nav>
   <aside class="sidebar" aria-label="知识目录">
     <a class="brand" href="/"><span>EvoKBase<small>知识目录</small></span></a>
@@ -28,6 +29,13 @@
     <section class="reading">
       <div class="eyebrow">THE KNOWLEDGE LIBRARY <span>本地文件</span></div>
       <p id="status" role="status" aria-live="polite">正在读取目录…</p>
+      <section id="search-panel" hidden aria-label="搜索知识">
+        <h1>搜索知识</h1>
+        <p class="search-hint">搜索已发布到 GBrain 的内容。本地刚保存的修改，需按原有流程发布后才能搜到。</p>
+        <form id="search-form" role="search"><label for="query">关键词或问题</label><div class="search-input"><input id="query" type="search" maxlength="500" required placeholder="从已有知识中找答案…" autocomplete="off"><button type="submit">搜索</button></div></form>
+        <p id="search-status" role="status" aria-live="polite">输入内容后搜索。</p>
+        <div id="search-results"></div>
+      </section>
       <div id="document-view">
       <article id="article" tabindex="-1"></article>
       <details id="metadata" hidden><summary>文档信息</summary><dl id="file-info"></dl><h3>Frontmatter · 文件头信息</h3><pre id="frontmatter"></pre></details>
