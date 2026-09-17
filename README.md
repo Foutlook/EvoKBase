@@ -29,7 +29,8 @@ Horizon 按需启用。安装和配置的实际值写入我的实例记录。
 3. [Horizon 外部知识模块](docs/Horizon外部知识模块.md)：官方安装和外部候选处理提示词，主手册第 04 章引用。
 4. [知识录入说明](templates/knowledge-base/04_系统维护/知识录入说明.md)：日常如何保存、更新和验证知识。
 5. [验收说明](docs/开发验收.md)：材料检查记录及尚未完成的真实部署验收。
-6. [知识门户与导入分阶段设计](docs/知识门户与导入分阶段设计.md)：待实施的网页浏览、关系图、文档导入、多源接入及 GitHub 推送后自动刷新方案，包含模块边界和各阶段验收。
+6. [知识门户与导入分阶段设计](docs/知识门户与导入分阶段设计.md)：网页浏览、关系图、文档导入、多源接入及 GitHub 推送后自动刷新的阶段路线，包含模块边界和各阶段验收。
+7. [只读知识门户（P1 / P2）](portal/README.md)：可选的本机目录、Markdown、附件与真实链接关系图入口；不依赖 GBrain 或模型，不改变原有审核和刷新。
 
 ## 仓库提供什么
 
@@ -41,7 +42,8 @@ Horizon 按需启用。安装和配置的实际值写入我的实例记录。
 | `templates/codex/knowledge_reviewer.md` | 评审子 Agent 的角色提示词 |
 | `templates/codex/knowledge-flow.mjs` | 日常运行的 Hook 处理器：注入调度要求，由主 Agent 启动子 Agent |
 | `tests/hook.test.mjs` | 配套 Hook 的行为检查，运行 `node --test tests/hook.test.mjs` |
+| `portal/` | 可选的只读网页应用、启动说明与隔离测试 |
 
-EvoKBase 本身无需安装，没有 `evokbase` 命令或 npm 安装包。Git、Obsidian、Codex、GBrain、Horizon 及其依赖由执行 AI 根据当前官方说明直接安装。Hook 是日常运行材料，不承担软件下载、安装或升级。
+手册本身无需安装，没有 `evokbase` 命令或公开 npm 安装包。可选网页单独按 `portal/README.md` 安装依赖并启动。Git、Obsidian、Codex、GBrain、Horizon 及其依赖由执行 AI 根据当前官方说明直接安装。Hook 是日常运行材料，不承担软件下载、安装或升级。
 
 当前为早期手册草案，许可证待确定。用户知识、凭据、实例配置和运行报告保存在用户自己的目录，不属于本仓库。旧安装器试验已退出交付范围；其测试通过不代表本手册已完成新用户全流程验收。

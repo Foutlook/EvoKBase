@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EvoKBase · 知识阅览室</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/vendor/d3.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#article">跳到正文</a>
+  <nav class="primary-nav" aria-label="功能导航">
+    <a id="home-link" href="/?doc=%E9%A6%96%E9%A1%B5.md" aria-label="首页" title="首页" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/></svg></a>
+    <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg></a>
+  </nav>
+  <aside class="sidebar" aria-label="知识目录">
+    <a class="brand" href="/"><span>EvoKBase<small>知识目录</small></span></a>
+    <div class="library-label">文件 <span id="count">—</span></div>
+    <label for="filter">筛选文件</label>
+    <input id="filter" type="search" placeholder="输入文件名或路径…" autocomplete="off" aria-describedby="filter-hint">
+    <small id="filter-hint" class="filter-hint">仅筛选左侧目录，不搜索正文</small>
+    <nav id="tree" aria-label="目录树"></nav>
+    <div class="sidebar-foot"><span class="dot"></span> 本机 · 只读浏览<small>在原文件中编辑，回到这里刷新。</small></div>
+  </aside>
+  <main>
+    <header class="toolbar"><span id="breadcrumb">你的知识，随手可读</span><button id="refresh" type="button">↻ 刷新</button></header>
+    <section class="reading">
+      <div class="eyebrow">THE KNOWLEDGE LIBRARY <span>本地文件</span></div>
+      <p id="status" role="status" aria-live="polite">正在读取目录…</p>
+      <div id="document-view">
+      <article id="article" tabindex="-1"></article>
+      <details id="metadata" hidden><summary>文档信息</summary><dl id="file-info"></dl><h3>Frontmatter · 文件头信息</h3><pre id="frontmatter"></pre></details>
+      <details id="link-issues" hidden><summary id="issue-summary">未解析链接</summary><ul id="issues"></ul></details>
+      </div>
+      <section id="relations" hidden aria-label="关系图谱">
+        <div class="graph-stage">
+          <div id="graph-canvas" tabindex="0" aria-label="关系图谱：拖动平移，滚轮或加减键缩放，方向键平移；点击节点打开文档"></div>
+          <h1 class="graph-heading">关系图谱</h1>
+          <details id="graph-settings" class="graph-settings">
+            <summary aria-label="图谱设置" title="图谱设置">⚙</summary>
+            <div class="graph-settings-body">
+              <details open><summary>筛选</summary>
+                <label>查看范围<select id="graph-scope"><option value="all">全部展示文档</option><option value="local">当前文档 · 一跳关系</option></select></label>
+                <label>筛选文档<input id="graph-filter" type="search" placeholder="文件名或路径包含…"></label>
+                <label class="graph-check"><input id="graph-orphans" type="checkbox" checked>显示孤立节点</label>
+              </details>
+              <details><summary>分组</summary><p class="graph-hint">按文件名或路径包含的文字着色。</p><div id="graph-groups"></div><button id="graph-add-group" type="button">＋ 新建分组</button></details>
+              <details><summary>显示</summary>
+                <label class="graph-check"><input id="graph-arrows" type="checkbox">显示箭头</label>
+                <label>节点大小<input id="graph-node-size" type="range" min="0.5" max="2.5" step="0.1" value="1"></label>
+                <label>文字大小<input id="graph-text-size" type="range" min="0.5" max="1.8" step="0.1" value="1"></label>
+                <label>连线粗细<input id="graph-line-size" type="range" min="0.3" max="3" step="0.1" value="1"></label>
+              </details>
+              <details><summary>物理效果</summary>
+                <label>向心力<input id="graph-center" type="range" min="0" max="0.15" step="0.005" value="0.025"></label>
+                <label>斥力<input id="graph-repel" type="range" min="20" max="500" step="10" value="180"></label>
+                <label>连线强度<input id="graph-strength" type="range" min="0.05" max="1" step="0.05" value="0.3"></label>
+                <label>连线长度<input id="graph-distance" type="range" min="30" max="250" step="5" value="100"></label>
+              </details>
+            </div>
+          </details>
+          <div class="graph-navigation" aria-label="图谱导航"><button id="graph-zoom-in" type="button" aria-label="放大">＋</button><button id="graph-zoom-out" type="button" aria-label="缩小">−</button><button id="graph-fit" type="button">适应画布</button><button id="graph-expand" type="button" aria-pressed="false">展开画布</button></div>
+          <div id="graph-hover" role="status" aria-live="polite" hidden></div>
+        </div>
+        <p id="graph-status" role="status" aria-live="polite"></p>
+        <p class="graph-hint graph-instructions">拖动节点或空白处 · 滚轮缩放 · 悬停查看关联 · 点击节点打开正文</p>
+        <details class="graph-evidence"><summary>引用明细与原文位置</summary><div id="graph-records"></div></details>
+        <details id="graph-unresolved" hidden><summary id="graph-unresolved-title">未解析引用</summary><ul id="graph-problems"></ul></details>
+        <details id="graph-warnings" hidden><summary>读取警告</summary><ul id="graph-warning-list"></ul></details>
+      </section>
+      <footer>EVOKBASE <span>让知识回到日常。</span></footer>
+    </section>
+  </main>
+</body>
+</html>
