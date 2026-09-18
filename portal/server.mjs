@@ -4,12 +4,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLibrary, types, failure } from './library.mjs';
 import { createSearch } from './search.mjs';
+import { createImports } from './imports.mjs';
 
 const web = fileURLToPath(new URL('./web/', import.meta.url));
-const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
+const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/imports.js': ['imports.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
 export async function startPortal(config, port = 4317) {
   const library = await createLibrary(config);
   const search = createSearch(config.gbrain, library);
+  const imports = await createImports(config);
   const server = http.createServer(async (req, res) => {
     const authority = `127.0.0.1:${server.address().port}`;
     const origin = `http://${authority}`;
@@ -20,14 +22,34 @@ export async function startPortal(config, port = 4317) {
     function send(status, type, body) { res.writeHead(status, { 'Content-Type': type }); res.end(body); }
     try {
       if (req.headers.host !== authority || (req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') throw failure(403, '仅允许本机同源访问');
-      if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('Allow', 'GET, HEAD'); throw failure(405, '只读入口'); }
       const url = new URL(req.url, origin);
+      if (req.method === 'POST' && imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)) {
+        if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'导入只接受本机页面的明确操作');
+        let size = 0; const chunks = [];
+        for await (const chunk of req) { size += chunk.length; if (size > 6 * 1024 * 1024) throw failure(413,'导入请求超过限制'); chunks.push(chunk); }
+        let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'导入请求不是有效 JSON'); }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'导入请求无效');
+        const id = url.pathname.split('/')[3];
+        const result = id ? await imports.update(id,input) : await imports.create(input);
+        return send(200,'application/json; charset=utf-8',JSON.stringify(result));
+      }
+      if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('Allow', 'GET, HEAD'); throw failure(405, '只读入口；导入暂存仅允许专用入口'); }
       if (assets[url.pathname]) {
         const [file, type] = assets[url.pathname];
         return send(200, type + '; charset=utf-8', req.method === 'HEAD' ? '' : await fs.readFile(path.join(web, file)));
       }
       let result;
       if (url.pathname === '/api/tree') result = await library.list();
+      else if (url.pathname === '/api/imports') result = {enabled:Boolean(imports),jobs:imports?await imports.list():[],resourceRoot:imports?.resourceRoot};
+      else if (/^\/api\/imports\/[a-f\d-]+(?:\/handoff)?$/.test(url.pathname)) {
+        if (!imports) throw failure(503,'未配置导入暂存目录');
+        const id = url.pathname.split('/')[3];
+        if (url.pathname.endsWith('/handoff')) {
+          res.setHeader('Content-Disposition',`attachment; filename="review-${id}.md"`);
+          return send(200,'text/markdown; charset=utf-8',await imports.handoff(id));
+        }
+        result = await imports.preview(id);
+      }
       else if (url.pathname === '/api/search') result = await search.search(url.searchParams.get('q'));
       else if (url.pathname === '/api/search/page') result = await search.indexed(url.searchParams.get('slug'));
       else if (url.pathname === '/api/graph') result = await library.graph(url.searchParams.get('path') ?? undefined);

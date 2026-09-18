@@ -14,6 +14,7 @@
     <a id="home-link" href="/?doc=%E9%A6%96%E9%A1%B5.md" aria-label="首页" title="首页" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/></svg></a>
     <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg></a>
     <a id="search-view" href="/?view=search" aria-label="搜索知识" title="搜索知识"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></a>
+    <a id="import-view" href="/?view=imports" aria-label="导入资料" title="导入资料"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-7 5-5 5 5M4 15v6h16v-6"/></svg></a>
   </nav>
   <aside class="sidebar" aria-label="知识目录">
     <a class="brand" href="/"><span>EvoKBase<small>知识目录</small></span></a>
@@ -35,6 +36,28 @@
         <form id="search-form" role="search"><label for="query">关键词或问题</label><div class="search-input"><input id="query" type="search" maxlength="500" required placeholder="从已有知识中找答案…" autocomplete="off"><button type="submit">搜索</button></div></form>
         <p id="search-status" role="status" aria-live="polite">输入内容后搜索。</p>
         <div id="search-results"></div>
+      </section>
+      <section id="import-panel" hidden aria-label="导入 Markdown">
+        <h1>导入资料</h1><p class="search-hint">先保留原件，再核对来源。首版支持 Markdown，暂存不会触发知识发布。</p>
+        <p id="import-status" role="status" aria-live="polite">正在读取导入配置…</p>
+        <form id="import-form" hidden>
+          <label for="import-file">Markdown 原件 · UTF-8，最多 4 MiB</label><input id="import-file" type="file" accept=".md" required>
+          <label for="import-title">资料标题（可选）</label><input id="import-title" maxlength="150" placeholder="默认使用文件名">
+          <label for="import-source">来源链接或说明（可选）</label><input id="import-source" maxlength="500" placeholder="例如原始文章链接；不填写无法核对的信息">
+          <button id="import-upload" type="submit">暂存并预览</button>
+        </form>
+        <label for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select>
+        <section id="import-draft" hidden>
+          <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p><p id="import-warnings" class="search-version"></p>
+          <details open><summary>原文预览</summary><article id="import-preview"></article></details>
+          <details><summary>完整 Markdown 原件</summary><pre id="import-original"></pre></details>
+          <label for="import-target">拟归档目录</label><input id="import-target" maxlength="220">
+          <label for="import-card">原始资料卡草稿</label><textarea id="import-card" rows="18" spellcheck="false"></textarea>
+          <button id="import-save" type="button">保存草稿与目标</button>
+          <details open><summary>拟新增文件与摘要</summary><pre id="import-files"></pre></details>
+          <a id="import-handoff" download>导出审核交接任务</a>
+          <p class="search-hint">将交接任务交给现有 Codex 渠道，核对具体内容并确认。网页不替代审核，也不自动提交或推送。</p>
+        </section>
       </section>
       <div id="document-view">
       <article id="article" tabindex="-1"></article>

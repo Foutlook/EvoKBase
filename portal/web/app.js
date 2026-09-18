@@ -1,4 +1,5 @@
 import { initGraph } from './graph.js';
+import { initImports } from './imports.js';
 
 const $ = id => document.getElementById(id);
 let files = [];
@@ -6,6 +7,8 @@ let current = new URL(location.href).searchParams.get('doc');
 const attachment = new URL(location.href).searchParams.get('attachment');
 const graphPage = new URL(location.href).searchParams.get('view') === 'graph';
 const searchPage = new URL(location.href).searchParams.get('view') === 'search';
+const importPage = new URL(location.href).searchParams.get('view') === 'imports';
+const importsView = importPage ? initImports() : null;
 let revision = 0;
 const graphView = initGraph(() => current);
 if (graphPage) graphView.show();
@@ -17,6 +20,11 @@ if (searchPage) {
   document.querySelector('.skip').href = '#query';
   document.querySelector('.skip').textContent = '跳到搜索';
 }
+if (importPage) {
+  $('document-view').hidden = true; $('import-panel').hidden = false; $('status').hidden = true;
+  document.querySelector('.eyebrow').hidden = true;
+  document.querySelector('.skip').href = '#import-file'; document.querySelector('.skip').textContent = '跳到导入';
+}
 async function get(url) {
   const response = await fetch(url, { cache: 'no-store' });
   const body = await response.json();
@@ -25,7 +33,8 @@ async function get(url) {
 }
 function tree() {
   $('home-link').hidden = !files.includes('首页.md');
-  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !attachment && current === '首页.md' ? 'page' : 'false');
+  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !importPage && !attachment && current === '首页.md' ? 'page' : 'false');
+  $('import-view').setAttribute('aria-current', importPage ? 'page' : 'false');
   $('search-view').setAttribute('aria-current', searchPage ? 'page' : 'false');
   $('graph-view').setAttribute('aria-current', graphPage ? 'page' : 'false');
   $('graph-view').href = '/?view=graph' + (current ? '&doc=' + encodeURIComponent(current) : '');
@@ -53,7 +62,7 @@ function tree() {
         link.href = (markdown ? '/?doc=' : '/?attachment=') + encodeURIComponent(value);
         link.title = value;
         if (!markdown) link.className = 'attachment';
-        if (!graphPage && !searchPage && value === (attachment || current)) link.setAttribute('aria-current', 'page');
+        if (!graphPage && !searchPage && !importPage && value === (attachment || current)) link.setAttribute('aria-current', 'page');
         parent.append(link);
       }
     }
@@ -76,6 +85,10 @@ async function refresh() {
     current ??= files.find(p => p === '首页.md') ?? files.find(p => /\.md$/i.test(p));
     if (graphPage && (!files.includes(current) || !/\.md$/i.test(current))) current = files.find(p => /\.md$/i.test(p));
     tree();
+    if (importPage) {
+      $('breadcrumb').textContent = '导入 Markdown'; document.title = '导入 Markdown · EvoKBase';
+      await importsView.refresh(); return;
+    }
     if (searchPage) {
       $('breadcrumb').textContent = '搜索知识';
       document.title = '搜索知识 · EvoKBase';
@@ -152,6 +165,7 @@ async function refresh() {
     }
   } catch (error) {
     if (run !== revision) return;
+    if (importPage) { $('import-status').textContent = error.message; return; }
     if (searchPage) { $('search-status').textContent = `读取失败：${error.message}`; return; }
     if (graphPage) { $('graph-status').textContent = `关系图谱暂不可用：${error.message}。可刷新重试。`; return; }
     $('article').textContent = '无法读取此文档。你仍可以从左侧选择其他文件。';

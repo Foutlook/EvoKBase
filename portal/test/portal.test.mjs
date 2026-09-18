@@ -303,7 +303,7 @@ test('搜索页清空后刷新会移除旧查询，迟到响应不恢复旧结�
       searchStarted(); return pending;
     }
   });
-  const source = (await fs.readFile(new URL('../web/app.js', import.meta.url), 'utf8')).replace(/^import .*?;\r?\n/, '');
+  const source = (await fs.readFile(new URL('../web/app.js', import.meta.url), 'utf8')).replace(/^import .*?;\r?\n/gm, '');
   vm.runInContext(source, context);
   await started;
   node('query').value = '';
