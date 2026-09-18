@@ -4,14 +4,14 @@ import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 import { parseDocument, LineCounter, visit, isScalar } from 'yaml';
 
-export const types = { '.md': 'text/plain', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.txt': 'text/plain', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+export const types = { '.md': 'text/plain', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.txt': 'text/plain', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.bin': 'application/octet-stream' };
 const hidden = /^(?:\.|tmp$|temp$|node_modules$|logs?$|backups?$|credentials?$|secrets?$)/i;
 const internal = /^(?:AGENTS|task_plan|findings|progress)\.md$/i;
 const md = new MarkdownIt({ html: false, linkify: false });
 const escape = md.utils.escapeHtml;
 export function failure(status, message) { return Object.assign(new Error(message), { status }); }
 
-export async function createLibrary(config) {
+export async function createLibrary(config, stagedFiles) {
   if (!config.root || !Array.isArray(config.include) || !config.include.length || !config.include.every(x => typeof x === 'string')) throw Error('配置必须提供 root 和非空 include 列表');
   const root = await fs.realpath(path.resolve(config.root));
   if (!(await fs.stat(root)).isDirectory()) throw Error('root 必须是目录');
@@ -19,6 +19,7 @@ export async function createLibrary(config) {
   if (!Array.isArray(excludes) || !excludes.every(x => typeof x === 'string')) throw Error('exclude 必须是路径列表');
   const safe = value => typeof value === 'string' && value && !value.includes('\\') && !/[\x00-\x1f:]/.test(value) && !value.startsWith('/') && value.split('/').every(p => p && p !== '..' && !hidden.test(p) && !internal.test(p) && !/[. ]$/.test(p));
   if (![...config.include, ...excludes].every(safe)) throw Error('include/exclude 必须是安全的库内相对路径');
+  if (stagedFiles && !Object.entries(stagedFiles).every(([name,source])=>safe(name)&&safe(source))) throw Error('暂存文件映射无效');
   const within = (file, base) => file === base || file.startsWith(base + '/');
   function allowed(file) {
     return safe(file) && config.include.some(p => within(file, p)) && !excludes.some(p => within(file, p));
@@ -26,7 +27,10 @@ export async function createLibrary(config) {
   async function checked(file) {
     if (!allowed(file) || !types[path.extname(file).toLowerCase()]) throw failure(404, '文件不在展示范围内');
     let current = root;
-    for (const part of file.split('/')) {
+    // Staging renders the final relative names without copying or modifying approved bytes.
+    const source = stagedFiles ? stagedFiles[file] : file;
+    if (!source) throw failure(404,'文件不在暂存清单内');
+    for (const part of source.split('/')) {
       current = path.join(current, part);
       const stat = await fs.lstat(current);
       // Windows junctions and POSIX symlinks must not widen the selected library.
@@ -39,6 +43,7 @@ export async function createLibrary(config) {
     return current;
   }
   async function list() {
+    if (stagedFiles) return {files:Object.keys(stagedFiles).filter(allowed).sort(),warnings:[]};
     // ponytail: rescan for fresh files; add an application-side index only if large vaults become slow.
     const files = [], warnings = [];
     async function walk(dir, relative = '') {

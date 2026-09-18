@@ -37,24 +37,29 @@
         <p id="search-status" role="status" aria-live="polite">输入内容后搜索。</p>
         <div id="search-results"></div>
       </section>
-      <section id="import-panel" hidden aria-label="导入 Markdown">
-        <h1>导入资料</h1><p class="search-hint">先保留原件，再核对来源。首版支持 Markdown，暂存不会触发知识发布。</p>
+      <section id="import-panel" hidden aria-label="导入资料">
+        <h1>导入资料</h1><p class="search-hint">先保留原件，再核对来源。支持 Markdown、DOCX 和文字版 PDF；扫描页会标明待识别。暂存不会触发知识发布。</p>
         <p id="import-status" role="status" aria-live="polite">正在读取导入配置…</p>
         <form id="import-form" hidden>
-          <label for="import-file">Markdown 原件 · UTF-8，最多 4 MiB</label><input id="import-file" type="file" accept=".md" required>
+          <label for="import-file">Markdown · UTF-8，最多 4 MiB；DOCX / PDF · 最多 16 MiB</label><input id="import-file" type="file" accept=".md,.docx,.pdf" required>
           <label for="import-title">资料标题（可选）</label><input id="import-title" maxlength="150" placeholder="默认使用文件名">
           <label for="import-source">来源链接或说明（可选）</label><input id="import-source" maxlength="500" placeholder="例如原始文章链接；不填写无法核对的信息">
+          <label for="import-new-category">主题分类</label><input id="import-new-category" list="import-categories" maxlength="160" required placeholder="选择已有分类，或输入新分类 / 子分类">
+          <datalist id="import-categories"></datalist>
           <button id="import-upload" type="submit">暂存并预览</button>
         </form>
         <label for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select>
         <section id="import-draft" hidden>
           <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p><p id="import-warnings" class="search-version"></p>
-          <details open><summary>原文预览</summary><article id="import-preview"></article></details>
-          <details><summary>完整 Markdown 原件</summary><pre id="import-original"></pre></details>
-          <label for="import-target">拟归档目录</label><input id="import-target" maxlength="220">
+          <a id="import-download" download>下载完整原件，对照核对</a>
+          <details open><summary>正文预览（自动解析不代表全文已读）</summary><article id="import-preview"></article></details>
+          <details><summary>Markdown 文本（Word / PDF 为解析结果）</summary><pre id="import-original"></pre></details>
+          <label for="import-category">主题分类</label><input id="import-category" list="import-categories" maxlength="160" placeholder="例如：编程基础 / 位运算">
+          <p class="search-hint">沿用知识库已有分类，也可新增；层级用 / 分隔。保存时同步归档目录和资料卡主题，保留其他主题标签。</p>
+          <label for="import-target">归档目录（草稿可调整）</label><input id="import-target" maxlength="220">
           <label for="import-card">原始资料卡草稿</label><textarea id="import-card" rows="18" spellcheck="false"></textarea>
           <button id="import-save" type="button">保存草稿与目标</button>
-          <details open><summary>拟新增文件与摘要</summary><pre id="import-files"></pre></details>
+          <details open><summary>归档文件清单与摘要</summary><pre id="import-files"></pre></details>
           <a id="import-handoff" download>导出审核交接任务</a>
           <p class="search-hint">将交接任务交给现有 Codex 渠道，核对具体内容并确认。网页不替代审核，也不自动提交或推送。</p>
         </section>

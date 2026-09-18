@@ -38,9 +38,9 @@ function review(job, approval) {
 async function blobsMatch(store, job, commit) {
   const names = (await git(store,'diff-tree','--no-commit-id','--name-only','-r','-z',commit)).split('\0').filter(Boolean).sort();
   if (JSON.stringify(names) !== JSON.stringify(store.outputPaths(job).sort())) return false;
-  for (const [index,file] of store.outputPaths(job).entries()) {
-    const blob = await git(store,'rev-parse',`${commit}:${file}`);
-    const expected = await git(store,'hash-object','--no-filters',path.join(store.directory,job.id,index?'draft.md':'original.md'));
+  for (const file of store.outputEntries(job)) {
+    const blob = await git(store,'rev-parse',`${commit}:${file.path}`);
+    const expected = await git(store,'hash-object','--no-filters',path.join(store.directory,job.id,file.name));
     if (blob !== expected) return false;
   }
   return true;
@@ -53,6 +53,7 @@ async function writtenFiles(store, job, bytes) {
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       if (job.stage !== 'writing') throw failure(409,'本任务正式文件缺失，请人工核对后恢复');
+      await plainPath(path.dirname(target),true);
       await fs.writeFile(target,bytes[index],{flag:'wx'});
     }
   }
@@ -61,11 +62,12 @@ async function writtenFiles(store, job, bytes) {
 // These functions are CLI-only. The web application cannot issue approvals, commits, pushes or retries.
 export async function commitImport(store, config, id, approval) {
   return store.locked(async()=>{
-    const {job,original,card} = await store.load(id); review(job,approval);
+    const {job,artifacts} = await store.load(id); review(job,approval);
     if (job.commit) return job;
     const {head,remoteHead} = await repository(store,config);
     const files = store.outputPaths(job);
     if (job.stage === 'draft') {
+      store.requireCategory(job,artifacts[1].bytes);
       await clean(store);
       if (head !== remoteHead) throw failure(409,'本地与远程 main 不一致，禁止夹带其他待推送提交');
       await plainPath(path.join(store.root,job.target));
@@ -82,13 +84,13 @@ export async function commitImport(store, config, id, approval) {
     }
     if (remoteHead !== job.base) throw failure(409,'远程 main 已变化，请人工处理并重新核对发布范围');
     await plainPath(path.join(store.root,job.target),true);
-    await writtenFiles(store,job,[original,card]);
+    await writtenFiles(store,job,artifacts.map(file=>file.bytes));
     job.stage = 'files_written'; await store.save(job);
     await git(store,'-c','core.autocrlf=false','add','--',...files);
     const staged = (await git(store,'diff','--cached','--name-only','-z')).split('\0').filter(Boolean).sort();
     if (JSON.stringify(staged) !== JSON.stringify([...files].sort())) throw failure(409,'暂存文件与已确认清单不一致，未提交');
-    for (const [index,file] of files.entries()) {
-      if (await git(store,'rev-parse',`:${file}`) !== await git(store,'hash-object','--no-filters',path.join(store.directory,id,index?'draft.md':'original.md'))) throw failure(409,'Git 属性或过滤器改变了已确认内容，未提交；请人工核对');
+    for (const file of store.outputEntries(job)) {
+      if (await git(store,'rev-parse',`:${file.path}`) !== await git(store,'hash-object','--no-filters',path.join(store.directory,id,file.name))) throw failure(409,'Git 属性或过滤器改变了已确认内容，未提交；请人工核对');
     }
     await git(store,'-c','core.autocrlf=false','commit','-m',`归档资料：${job.title}`,'-m',`EvoKBase-Import: ${job.id}/${job.version}`);
     const commit = await git(store,'rev-parse','HEAD');
@@ -98,11 +100,11 @@ export async function commitImport(store, config, id, approval) {
 }
 export async function pushImport(store, config, id, approval) {
   return store.locked(async()=>{
-    const {job,original,card} = await store.load(id); review(job,approval);
+    const {job,artifacts} = await store.load(id); review(job,approval);
     if (!job.commit) throw failure(409,'请先完成本任务的精确提交');
     if (['pushed','refresh_failed','complete'].includes(job.stage)) return job;
     const {head,remoteHead,publish} = await repository(store,config);
-    await clean(store); await writtenFiles(store,job,[original,card]);
+    await clean(store); await writtenFiles(store,job,artifacts.map(file=>file.bytes));
     if (head !== job.commit || await git(store,'rev-parse','HEAD^') !== job.base || !await blobsMatch(store,job,head) || ![job.base,job.commit].includes(remoteHead)) throw failure(409,'提交或远程范围发生变化，禁止夹带或覆盖其他提交');
     if (remoteHead !== job.commit) await git(store,'push',publish.remote,`${job.commit}:refs/heads/main`);
     job.stage = 'pushed'; await store.save(job); return job;
@@ -132,7 +134,7 @@ export async function recoverLock(store, expectedHash) {
 }
 export async function checkImport(store, config, id, retry = false) {
   return store.locked(async()=>{
-    const {job} = await store.load(id);
+    const {job,artifacts} = await store.load(id);
     if (!job.commit || !['pushed','refresh_failed','complete'].includes(job.stage)) throw failure(409,'本任务尚未推送');
     if (job.stage === 'complete') return job;
     const publish = settings(config);
@@ -152,9 +154,10 @@ export async function checkImport(store, config, id, retry = false) {
         await git(store,'fetch',publish.remote,'main');
         await git(store,'merge-base','--is-ancestor',job.commit,receipt.actual_sha);
         const search = createSearch(config.gbrain,await createLibrary(config));
-        for (const [index,file] of store.outputPaths(job).entries()) {
-          const indexed = await search.indexed(pathSlug(file));
-          if (!indexed.local.bodyMatches || indexed.local.version !== (index?job.cardHash:job.originalHash)) throw failure(409,'已收到刷新回执，但原文与已确认资料版本不一致，请核对');
+        await writtenFiles(store,job,artifacts.map(file=>file.bytes));
+        for (const file of store.outputEntries(job).filter(file=>file.path.endsWith('.md'))) {
+          const indexed = await search.indexed(pathSlug(file.path));
+          if (!indexed.local.bodyMatches || indexed.local.version !== file.sha256) throw failure(409,'已收到刷新回执，但原文与已确认资料版本不一致，请核对');
         }
         const hits = await search.search(job.originalHash);
         if (!hits.results.some(hit=>hit.local?.path === store.outputPaths(job)[1])) throw failure(409,'刷新后尚未召回本次资料卡，不能标记完成');

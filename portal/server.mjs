@@ -26,7 +26,7 @@ export async function startPortal(config, port = 4317) {
       if (req.method === 'POST' && imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)) {
         if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'导入只接受本机页面的明确操作');
         let size = 0; const chunks = [];
-        for await (const chunk of req) { size += chunk.length; if (size > 6 * 1024 * 1024) throw failure(413,'导入请求超过限制'); chunks.push(chunk); }
+        for await (const chunk of req) { size += chunk.length; if (size > 23 * 1024 * 1024) throw failure(413,'导入请求超过限制'); chunks.push(chunk); }
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'导入请求不是有效 JSON'); }
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'导入请求无效');
         const id = url.pathname.split('/')[3];
@@ -40,7 +40,15 @@ export async function startPortal(config, port = 4317) {
       }
       let result;
       if (url.pathname === '/api/tree') result = await library.list();
-      else if (url.pathname === '/api/imports') result = {enabled:Boolean(imports),jobs:imports?await imports.list():[],resourceRoot:imports?.resourceRoot};
+      else if (/^\/api\/imports\/[a-f\d-]+\/file$/.test(url.pathname)) {
+        if (!imports) throw failure(503,'未配置导入暂存目录');
+        const file = url.searchParams.get('path');
+        const bytes = await imports.readFile(url.pathname.split('/')[3],file);
+        const type = types[path.extname(file).toLowerCase()] || 'application/octet-stream';
+        res.setHeader('Content-Disposition',`${type.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(path.basename(file)).replace(/'/g,'%27')}`);
+        return send(200,type,req.method==='HEAD'?'':bytes);
+      }
+      else if (url.pathname === '/api/imports') result = {enabled:Boolean(imports),jobs:imports?await imports.list():[],categories:imports?await imports.categories():[],resourceRoot:imports?.resourceRoot};
       else if (/^\/api\/imports\/[a-f\d-]+(?:\/handoff)?$/.test(url.pathname)) {
         if (!imports) throw failure(503,'未配置导入暂存目录');
         const id = url.pathname.split('/')[3];

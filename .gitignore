@@ -5,3 +5,4 @@ coverage/
 *.local.json
 portal/runtime/
 portal/samples/
+__pycache__/

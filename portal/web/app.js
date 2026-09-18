@@ -86,7 +86,7 @@ async function refresh() {
     if (graphPage && (!files.includes(current) || !/\.md$/i.test(current))) current = files.find(p => /\.md$/i.test(p));
     tree();
     if (importPage) {
-      $('breadcrumb').textContent = '导入 Markdown'; document.title = '导入 Markdown · EvoKBase';
+      $('breadcrumb').textContent = '导入资料'; document.title = '导入资料 · EvoKBase';
       await importsView.refresh(); return;
     }
     if (searchPage) {
