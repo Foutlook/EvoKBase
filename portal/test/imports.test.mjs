@@ -8,7 +8,7 @@ import {promisify} from 'node:util';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
 import {createImports,digest} from '../imports.mjs';
-import {commitImport,pushImport,parseReceipt,recoverLock} from '../publish.mjs';
+import {archiveImport,commitImport,pushImport,parseReceipt,recoverLock} from '../publish.mjs';
 import {startPortal} from '../server.mjs';
 import {createLibrary} from '../library.mjs';
 
@@ -240,6 +240,7 @@ test('确认前不写正式库，拒绝无关修改和待推送提交，精确�
   await git('commit','-m','隔离的其他工作');
   await assert.rejects(commitImport(store,config,job.id,approval),{status:409});
   await git('push','fixture','main:main');
+  assert.equal((await archiveImport(store,job.id,approval)).stage,'archived');
   const committed = await commitImport(store,config,job.id,approval);
   assert.equal(committed.stage,'committed');
   assert.equal(await git('status','--porcelain'),'');

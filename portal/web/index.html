@@ -51,6 +51,12 @@
       <section id="import-panel" hidden aria-label="导入资料">
         <header class="import-heading"><p class="import-kicker">收集，让知识有迹可循</p><h1 id="import-heading">本地导入</h1><p id="import-intro">上传文件，保留原件，再核对内容与来源。</p></header>
         <p id="import-status" role="status" aria-live="polite">正在读取导入配置…</p>
+        <details id="import-intake" open><summary>① 添加一篇新资料</summary>
+        <section class="import-processing-choice" aria-label="导入后处理">
+          <label><input id="import-auto-process" type="checkbox" checked> 帮我整理值得记住的内容</label>
+          <p id="import-model-status" class="search-hint">正在读取模型渠道…</p>
+          <p class="search-hint">AI 会阅读本篇资料，对照最多 3 份已有知识。导入时确认发送范围；整理完成后，由你选择保存哪些内容。</p>
+        </section>
         <section id="ima-panel" class="ima-panel" hidden aria-label="IMA 资料">
           <form id="ima-form" hidden><fieldset id="ima-fields">
             <div class="ima-source-bar">
@@ -95,25 +101,38 @@
           <div class="local-file-box"><span class="file-symbol" aria-hidden="true">↥</span><label for="import-file">选择一份资料</label><p>Markdown · Word · PDF</p><input id="import-file" type="file" accept=".md,.docx,.pdf" required aria-describedby="import-file-hint"><small id="import-file-hint">Markdown ≤ 4 MiB · DOCX / PDF ≤ 16 MiB · 扫描 PDF 暂不识别</small></div>
           <div class="import-form-grid"><div><label for="import-title">资料标题 <span>可选</span></label><input id="import-title" maxlength="150" placeholder="默认使用文件名"></div><div><label for="import-new-category">存入主题分类</label><input id="import-new-category" list="import-categories" maxlength="160" required placeholder="选择或输入分类"></div></div>
           <label for="import-source">来源链接或说明 <span>可选</span></label><input id="import-source" maxlength="500" placeholder="保留原始文章链接或出处，方便日后追溯">
-          <div class="local-submit"><span>仅暂存，审核后再归档。</span><button id="import-upload" type="submit">暂存并预览 →</button></div>
+          <div class="local-submit"><span>先看整理结果，确认后才存入知识库。</span><button id="import-upload" type="submit">导入资料 →</button></div>
         </form>
+        </details>
         <datalist id="import-categories"></datalist>
-        <div class="import-resume"><div><h2>暂存与审核</h2><p>继续处理已暂存的资料，所有来源共用审核区。</p></div><div><label class="visually-hidden" for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select></div></div>
+        <div class="import-resume"><div><h2>我的导入资料</h2><p>选择一篇资料，继续查看或保存。</p></div><div><label class="visually-hidden" for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select></div></div>
         <section id="import-draft" hidden>
-          <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p><p id="import-warnings" class="search-version"></p>
-          <a id="import-download" download>下载原件或接口快照，对照核对</a>
+          <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p>
+          <ol class="review-steps" aria-label="保存步骤"><li>① 导入资料</li><li>② 选择要点</li><li>③ 确认保存</li></ol>
+          <section id="review-saved" class="review-success" hidden><h3>已存入本地知识库</h3><p>原文和保留的要点已保存。远程同步与搜索索引尚未更新。</p><a id="review-open">打开已保存的内容 →</a></section>
           <div id="import-source-update" hidden><button id="import-check-update" type="button">检查 IMA 更新</button><p id="import-update-status" class="search-hint" role="status" aria-live="polite"></p></div>
           <details id="import-previous" hidden><summary>更新前的正文与来源（与当前版本对照）</summary><p id="import-previous-info" class="search-hint"></p><pre id="import-previous-text"></pre></details>
-          <details open><summary>正文预览（自动解析不代表全文已读）</summary><article id="import-preview"></article></details>
-          <details><summary>Markdown 文本（Word / PDF 为解析结果）</summary><pre id="import-original"></pre></details>
-          <label for="import-category">主题分类</label><input id="import-category" list="import-categories" maxlength="160" placeholder="例如：编程基础 / 位运算">
-          <p class="search-hint">沿用知识库已有分类，也可新增；层级用 / 分隔。保存时同步归档目录和资料卡主题，保留其他主题标签。</p>
+          <details><summary>查看原文与读取范围</summary><p id="import-warnings" class="search-version"></p><a id="import-download" download>下载原件</a><article id="import-preview"></article><details><summary>原始文本</summary><pre id="import-original"></pre></details></details>
+          <section id="review-editor" class="import-processing" aria-label="选择保留的要点">
+            <h2>这篇资料，哪些值得留下？</h2>
+            <p id="processing-status" role="status" aria-live="polite">尚未处理。</p>
+            <div class="processing-actions"><button id="processing-start" type="button" class="secondary">重新整理</button><button id="processing-cancel" type="button" class="quiet" hidden>取消整理</button></div>
+            <p id="review-summary"></p><div id="review-candidates"></div>
+            <details id="review-questions" hidden><summary>还有哪些需要核实？</summary><ul id="review-question-list"></ul></details>
+            <p class="search-hint">勾选你想保留的要点，文字可以直接修改。不勾选的要点不会保存；原文会完整保留。</p>
+          </section>
+          <section id="review-controls" class="review-next"><label for="import-category">保存到哪个分类？</label><input id="import-category" list="import-categories" maxlength="160" placeholder="选择或输入分类"><p id="review-count" class="search-hint"></p><button id="review-prepare" type="button">下一步：确认保存内容 →</button><p id="review-status" role="status" aria-live="polite"></p></section>
+          <section id="review-confirmation" class="review-confirmation" hidden aria-label="确认保存内容"><h2>确认保存这些内容</h2><p id="review-destination"></p><div id="review-final-items"></div><p>原文及附件也会保留。本次保存到本机，不提交或同步到远程。</p><label class="review-check"><input id="review-confirm-check" type="checkbox"> 我已核对上述内容，确认保存</label><div class="processing-actions"><button id="review-confirm" type="button" disabled>确认存入本地知识库</button><button id="review-back" type="button" class="secondary">返回修改</button></div></section>
+          <p id="review-save-status" role="status" aria-live="polite"></p>
+          <details id="review-full-section" hidden><summary>查看完整保存文本</summary><pre id="review-full-card"></pre></details>
+          <details class="review-advanced"><summary>高级信息与原有审核方式</summary>
+          <button id="processing-adopt" type="button" class="secondary" disabled>填入资料卡供审核</button><pre id="processing-result" hidden></pre>
           <label for="import-target">归档目录（草稿可调整）</label><input id="import-target" maxlength="220">
           <label for="import-card">原始资料卡草稿</label><textarea id="import-card" rows="18" spellcheck="false"></textarea>
           <button id="import-save" type="button">保存草稿与目标</button>
-          <details open><summary>归档文件清单与摘要</summary><pre id="import-files"></pre></details>
+          <details><summary>归档文件清单与摘要</summary><pre id="import-files"></pre></details>
           <a id="import-handoff" download>导出审核交接任务</a>
-          <p class="search-hint">将交接任务交给现有 Codex 渠道，核对具体内容并确认。网页不替代审核，也不自动提交或推送。</p>
+          <p class="search-hint">需要提交与同步到远程时，仍使用原有审核交接流程。</p></details>
         </section>
       </section>
       <section id="model-panel" hidden aria-label="模型渠道">

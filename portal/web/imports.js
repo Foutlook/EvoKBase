@@ -1,7 +1,9 @@
 const $ = id => document.getElementById(id);
-const stages = {draft:'待审核',writing:'正式文件写入中，需恢复',files_written:'文件已保存，待提交',committed:'已提交，待推送',pushed:'已推送，待刷新验收',refresh_failed:'刷新失败，需核对',complete:'已发布并验收',invalid:'任务记录需核对'};
+const stages = {draft:'待你确认',archiving:'保存未完成，可继续保存',archived:'已存入本地知识库',writing:'正式文件写入中，需恢复',files_written:'文件已保存，待提交',committed:'已提交，待推送',pushed:'已推送，待刷新验收',refresh_failed:'刷新失败，需核对',complete:'已发布并验收',invalid:'任务记录需核对'};
 export function initImports(source = 'local') {
   let current, revision = 0, busy = false, imaPage, imaLibrariesNext, imaFolder='', imaRequests=[], selectedToken='', yuqueState;
+  let processingState, pollTimer, modelConfigured=false;
+  let candidateDirty=false, candidateFields=[], displayedRun;
   const knowledgeMode=()=>$('ima-source').value==='knowledge';
   function imaControls() {
     $('ima-fields').disabled=busy;
@@ -9,7 +11,7 @@ export function initImports(source = 'local') {
     $('ima-next').disabled=busy || !imaPage || imaPage.isEnd;
     $('ima-import').disabled=busy || !selectedToken;
     $('ima-libraries-more').disabled=busy || !imaLibrariesNext;
-    $('ima-import').textContent=imaPage?.items.find(item=>item.token===selectedToken)?.kind==='folder'?'打开文件夹 →':'暂存所选资料 →';
+    $('ima-import').textContent=imaPage?.items.find(item=>item.token===selectedToken)?.kind==='folder'?'打开文件夹 →':'导入所选资料 →';
   }
   function setBusy(value) {
     busy = value;
@@ -20,21 +22,149 @@ export function initImports(source = 'local') {
     $('yuque-config-fields').disabled=value || !yuqueState || yuqueState.environment;
     $('yuque-clear').disabled=value || !yuqueState?.configured || yuqueState.environment;
     $('import-check-update').disabled=value || current?.remoteSource?.platform!=='ima' || !['draft','complete'].includes(current?.stage);
+    $('import-auto-process').disabled=value || !modelConfigured;
+    processingControls();
   }
-  const dirty = () => current?.stage === 'draft' && ($('import-category').value !== (current.category || '') || $('import-target').value !== current.target || $('import-card').value !== current.card);
+  const dirty = () => current?.stage === 'draft' && (candidateDirty || $('import-category').value !== (current.category || '') || $('import-target').value !== current.target || $('import-card').value !== current.card);
   function keepDraft() {
     if (!dirty()) return false;
-    $('import-status').textContent = '请先保存当前草稿，避免刷新或切换任务丢失修改。'; return true;
+    $('import-status').textContent = '有尚未保存的修改，请先点击“下一步”保存选择；高级文本修改请使用“保存草稿与目标”。'; return true;
   }
   window.addEventListener('beforeunload',event=>{ if (busy || dirty()) { event.preventDefault(); event.returnValue = ''; } });
   async function api(url, body) {
     const response = await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json','X-EvoKBase-Request':'1'},body:JSON.stringify(body)}:{cache:'no-store'});
     const data = await response.json(); if (!response.ok) throw Error(data.error || '导入操作未完成'); return data;
   }
+  function processingControls() {
+    const running=['queued','running'].includes(processingState?.status);
+    $('processing-start').disabled=busy || running || current?.stage!=='draft';
+    $('processing-cancel').hidden=!running;
+    $('processing-cancel').disabled=busy;
+    $('processing-adopt').disabled=busy || dirty() || processingState?.status!=='ready' || processingState?.stale || current?.stage!=='draft';
+    $('review-prepare').disabled=busy || running || current?.stage!=='draft';
+    $('review-confirm').disabled=busy || !$('review-confirm-check').checked || !current?.review || dirty();
+    $('review-back').disabled=busy || current?.stage!=='draft';
+    for(const fields of candidateFields) for(const field of [fields.keep,fields.title,fields.claim]) field.disabled=busy || current?.stage!=='draft';
+  }
+  function selectedPoints() { return candidateFields.filter(fields=>fields.keep.checked).map(fields=>({index:fields.index,title:fields.title.value,claim:fields.claim.value})); }
+  function selectionChanged() {
+    candidateDirty=true; $('review-confirmation').hidden=true; $('review-controls').hidden=false; $('review-confirm-check').checked=false;
+    $('review-count').textContent=`已选择 ${selectedPoints().length} 条要点。不选择要点时，只保存原文和已有备注。`;
+    processingControls();
+  }
+  function renderCandidates(data) {
+    const stamp=current.id+':'+(data.runId||'')+':'+data.status+':'+(current.review?.token||'');
+    if(displayedRun===stamp) return;
+    displayedRun=stamp; candidateFields=[]; $('review-candidates').replaceChildren();
+    $('review-summary').textContent=data.result?.summary||'';
+    const labels={new:'新增内容',supplement:'可以补充已有知识',conflict:'与已有知识有分歧',duplicate:'已有相近内容',uncertain:'还需要核实'};
+    for(const [index,item] of (data.result?.candidates||[]).entries()) {
+      const saved=current.review?.runId===data.runId?current.review.selections.find(point=>point.index===index):undefined;
+      const card=document.createElement('section'); card.className='review-point';
+      const top=document.createElement('div'); top.className='review-point-top';
+      const label=document.createElement('label'), keep=document.createElement('input'); keep.type='checkbox';
+      keep.checked=current.review?.runId===data.runId?Boolean(saved):['new','supplement'].includes(item.action); label.append(keep,document.createTextNode('保留这条'));
+      const badge=document.createElement('span'); badge.textContent=labels[item.action]; top.append(label,badge);
+      const titleLabel=document.createElement('label'), title=document.createElement('input'); title.id='point-title-'+index; title.maxLength=160; title.value=saved?.title||item.title; titleLabel.htmlFor=title.id; titleLabel.textContent='要点 '+(index+1)+' · 标题';
+      const claimLabel=document.createElement('label'), claim=document.createElement('textarea'); claim.id='point-claim-'+index; claim.maxLength=3000; claim.rows=4; claim.value=saved?.claim||item.claim; claimLabel.htmlFor=claim.id; claimLabel.textContent='值得记住的内容';
+      const reason=document.createElement('p'); reason.className='review-comparison'; reason.textContent='与已有知识的比较：'+item.reason;
+      const details=document.createElement('details'), summary=document.createElement('summary'); summary.textContent='查看原文依据和对照来源'; details.append(summary);
+      const quote=document.createElement('blockquote'); quote.textContent=item.sourceQuote; details.append(quote);
+      for(const ref of item.evidence) { const source=data.references.find(source=>source.id===ref.id), p=document.createElement('p'), link=document.createElement('a'); link.textContent=source?.title||source?.path||ref.id; link.href='/?doc='+encodeURIComponent(source?.path||''); link.target='_blank'; link.rel='noopener'; p.append(link,document.createTextNode('：'+ref.quote)); details.append(p); }
+      card.append(top,titleLabel,title,claimLabel,claim,reason,details); $('review-candidates').append(card);
+      candidateFields.push({index,keep,title,claim});
+      for(const field of [keep,title,claim]) field.addEventListener('input',selectionChanged);
+    }
+    $('review-question-list').replaceChildren();
+    for(const text of data.result?.questions||[]) { const li=document.createElement('li'); li.textContent=text; $('review-question-list').append(li); }
+    $('review-questions').hidden=!data.result?.questions?.length;
+    $('review-count').textContent=`已选择 ${selectedPoints().length} 条要点。不选择要点时，只保存原文和已有备注。`;
+  }
+  function showConfirmation() {
+    const record=current.review, archived=current.stage==='archived';
+    $('review-saved').hidden=!archived; $('review-controls').hidden=archived || Boolean(record);
+    $('review-confirmation').hidden=!record || !['draft','archiving'].includes(current.stage);
+    $('review-editor').hidden=archived || Boolean(record);
+    $('review-confirm-check').checked=false;
+    $('review-status').textContent='';
+    $('review-full-section').hidden=!record; $('review-full-card').textContent='';
+    if(!record) return;
+    if(current.stage==='draft') $('import-status').textContent='选择已保存。核对下面的内容，确认后存入本地知识库。';
+    $('review-open').href=record.documentUrl;
+    $('review-destination').textContent=`保存到「${current.category}」 · 原文及附件 ${Math.max(1,current.outputs.length-1)} 份 · 保留 ${record.selections.length} 条要点`;
+    $('review-final-items').replaceChildren();
+    for(const item of record.selections) { const section=document.createElement('section'), title=document.createElement('h3'), text=document.createElement('p'); title.textContent=item.title; text.textContent=item.claim; section.append(title,text); $('review-final-items').append(section); }
+    $('review-full-card').textContent=current.card;
+  }
+  $('review-prepare').addEventListener('click',async()=>{
+    if(!current || busy) return;
+    if($('import-card').value!==current.card) { $('review-status').textContent='高级文本有未保存修改，请先点击“保存草稿与目标”。'; return; }
+    setBusy(true);
+    try { show(await api('/api/imports/'+current.id+'/review',{action:'prepare',version:current.version,runId:processingState?.runId,selections:selectedPoints(),category:$('import-category').value})); }
+    catch(error) { $('review-status').textContent=error.message; }
+    finally { setBusy(false); }
+  });
+  $('review-confirm-check').addEventListener('change',processingControls);
+  $('review-back').addEventListener('click',()=>{if(busy)return; $('review-confirmation').hidden=true; $('review-editor').hidden=false; $('review-controls').hidden=false; $('review-confirm-check').checked=false; $('import-status').textContent='修改要点后，点击“下一步”重新核对保存内容。'; processingControls();});
+  $('review-confirm').addEventListener('click',async()=>{
+    if(busy || dirty() || !current?.review || !$('review-confirm-check').checked) return;
+    const id=current.id, input={action:'confirm',version:current.version,token:current.review.token,confirmed:true};
+    setBusy(true); $('review-save-status').textContent='正在保存到本地知识库…';
+    try { show(await api('/api/imports/'+id+'/review',input)); $('review-save-status').textContent='保存成功，已可在本地知识库查看。'; }
+    catch(error) { try { show(await api('/api/imports/'+id)); } catch {} $('review-save-status').textContent=error.message+'；未确认保存完成。'; }
+    finally { setBusy(false); }
+  });
+  function showProcessing(data={status:'idle'}) {
+    processingState=data;
+    const names={idle:'还没有整理结果。可以点击“重新整理”，也可以直接保存原文。',queued:'资料已收到，正在排队整理…',running:'正在阅读资料、对照已有知识，稍后会在这里显示结果。',ready:'整理好了。选择你想保留的内容，也可以直接修改文字。',failed:'整理失败，原文已保留。可以重试，或直接保存原文。',cancelled:'整理已取消，仍可保存原文。',interrupted:'上次整理已中断，可以重试。'};
+    $('processing-status').textContent=(names[data.status]||'状态需核对')+(data.error?' '+data.error:'')+(data.stale && !current?.review?' 原资料版本已变化，请重新整理。':'')+(data.status==='ready'?` 已按标题检索并对照 ${data.references.length} 份已有知识，仅覆盖本次找到的内容。${data.searchDegraded?' 部分搜索结果暂不可用。':''}`:'');
+    $('processing-result').hidden=data.status!=='ready'; $('processing-result').textContent=data.markdown||'';
+    renderCandidates(data);
+    processingControls();
+    if(pollTimer) clearTimeout(pollTimer);
+    if(['queued','running'].includes(data.status)) {
+      const id=current.id;
+      pollTimer=setTimeout(async()=>{
+        try { const next=await api('/api/imports/'+id+'/processing'); if(current?.id===id) showProcessing(next); }
+        catch(error) { if(current?.id===id) $('processing-status').textContent=error.message+'；刷新可恢复查看。'; }
+      },1500);
+    }
+  }
+  async function processingConsent(title,force=false) {
+    if(!force && !$('import-auto-process').checked) return undefined;
+    const state=await api('/api/models'), provider=state.providers?.find(item=>item.id===state.selected);
+    if(!state.enabled || !provider?.hasKey) throw Error('请先配置模型，或取消导入后自动处理。');
+    if(!window.confirm(`导入后由后端自动处理《${title}》。\n将本篇正文及最多 3 份召回的旧知识片段发送至 ${provider.name}（${provider.baseUrl}），模型 ${provider.model}；可能产生 API 用量。\n结果仅作为待审候选，不自动发布。是否继续？`)) throw Error('已取消本次操作，未发送资料。');
+    return {confirmed:true,provider:provider.id,modelVersion:state.version};
+  }
+  $('processing-start').addEventListener('click',async()=>{
+    if(!current || busy || keepDraft()) return;
+    setBusy(true);
+    try {
+      const consent=await processingConsent(current.title,true);
+      showProcessing(await api('/api/imports/'+current.id+'/processing',{action:'start',sourceVersion:current.version,...consent}));
+    } catch(error) { $('processing-status').textContent=error.message; }
+    finally { setBusy(false); }
+  });
+  $('processing-cancel').addEventListener('click',async()=>{
+    if(!current || busy) return;
+    try { showProcessing(await api('/api/imports/'+current.id+'/processing',{action:'cancel'})); }
+    catch(error) { $('processing-status').textContent=error.message; }
+  });
+  $('processing-adopt').addEventListener('click',()=>{
+    if(busy || dirty() || processingState?.status!=='ready' || processingState.stale || current?.stage!=='draft') return;
+    if($('import-card').value.includes(processingState.markdown)) { $('processing-status').textContent='这份候选已在资料卡中。'; return; }
+    $('import-card').value+=processingState.markdown;
+    $('import-handoff').hidden=true; $('import-status').textContent='候选已填入，尚未保存。请核对、编辑后保存草稿。'; processingControls();
+  });
+  window.addEventListener('pagehide',()=>{if(pollTimer) clearTimeout(pollTimer);});
   function show(job) {
-    current = job; $('import-draft').hidden = false;
+    current = job; candidateDirty=false; displayedRun=undefined; $('import-draft').hidden = false;
+    $('import-intake').open=false;
+    $('review-save-status').textContent='';
+    for(const option of $('import-jobs').options||[]) if(option.value===job.id) option.textContent=job.title+' · '+stages[job.stage];
     $('import-task-title').textContent = job.title;
-    $('import-version').textContent = `${stages[job.stage]} · 确认版本 ${job.version}`;
+    $('import-version').textContent = stages[job.stage];
     $('import-target').value = job.target; $('import-card').value = job.card;
     $('import-category').value = job.category || '';
     $('import-original').textContent = job.original;
@@ -52,9 +182,12 @@ export function initImports(source = 'local') {
     $('import-files').textContent = job.outputs.map(file=>`${file.path}\nSHA256 ${file.sha256}`).join('\n\n');
     $('import-save').disabled = job.stage !== 'draft';
     $('import-category').disabled = $('import-target').disabled = $('import-card').disabled = job.stage !== 'draft';
-    $('import-handoff').hidden = job.stage !== 'draft' || !job.category;
+    $('import-handoff').hidden = !['draft','archived'].includes(job.stage) || !job.category;
     $('import-handoff').href = '/api/imports/'+job.id+'/handoff';
-    $('import-status').textContent = job.stage === 'draft' ? (job.category?'草稿仅在独立暂存区。确认前不会进入知识库或索引。':'尚未分类，请选择主题分类并保存，再进行审核交接。') : stages[job.stage] + '；以下保留发布时清单，后续整理位置以知识目录为准。';
+    $('import-status').textContent = job.stage === 'draft' ? '资料已导入。查看下方要点，选择保留后点击“下一步”。' : stages[job.stage];
+    showProcessing(job.processing);
+    showConfirmation(); processingControls();
+    if(job.processingError) $('processing-status').textContent='资料已暂存，但自动处理未启动：'+job.processingError;
   }
   async function refresh() {
     if (busy || keepDraft()) return;
@@ -66,6 +199,13 @@ export function initImports(source = 'local') {
       $('import-jobs').replaceChildren(new Option('选择已有导入任务',''));
       $('import-categories').replaceChildren(...(data.categories || []).map(name=>new Option(name,name)));
       for (const job of data.jobs) $('import-jobs').append(new Option(`${job.title} · ${stages[job.stage]}`,job.id));
+      try {
+        const state=await api('/api/models'); if(run!==revision) return;
+        const provider=state.providers?.find(item=>item.id===state.selected);
+        modelConfigured=Boolean(state.enabled && provider?.hasKey);
+        $('import-model-status').textContent=modelConfigured?`${provider.name} · ${provider.model}。新导入会按此渠道生成待审候选。`:'模型未配置，仍可仅暂存资料；配置后可生成候选。';
+      } catch { modelConfigured=false; $('import-model-status').textContent='模型配置暂不可用，仍可仅暂存资料。'; }
+      $('import-auto-process').disabled=!modelConfigured; if(!modelConfigured) $('import-auto-process').checked=false;
       if (current) { $('import-jobs').value = current.id; const job = await api('/api/imports/'+current.id); if (run === revision && !keepDraft()) show(job); }
       if (source === 'ima') try {
         const ima=await api('/api/ima'); if(run!==revision) return;
@@ -92,7 +232,8 @@ export function initImports(source = 'local') {
       if (file.size > (/\.md$/i.test(file.name)?4:16)*1024*1024) throw Error('Markdown 上限 4 MiB，DOCX / PDF 上限 16 MiB');
       const bytes = new Uint8Array(await file.arrayBuffer()); let raw = '';
       for (let offset=0;offset<bytes.length;offset+=32768) raw += String.fromCharCode(...bytes.subarray(offset,offset+32768));
-      const job = await api('/api/imports',{name:file.name,base64:btoa(raw),title:$('import-title').value,source:$('import-source').value,category:$('import-new-category').value.split('/').map(part=>part.trim()).join('/')});
+      const processing=await processingConsent($('import-title').value||file.name);
+      const job = await api('/api/imports',{name:file.name,base64:btoa(raw),title:$('import-title').value,source:$('import-source').value,category:$('import-new-category').value.split('/').map(part=>part.trim()).join('/'),processing});
       show(job); setBusy(false); await refresh();
     } catch(error) { $('import-status').textContent = error.message; }
     finally { setBusy(false); }
@@ -108,12 +249,14 @@ export function initImports(source = 'local') {
     catch(error) { if (run === revision) $('import-status').textContent = error.message; }
   });
   for (const id of ['import-category','import-target','import-card']) $(id).addEventListener('input',()=>{
+    if(id==='import-category') { $('review-confirmation').hidden=true; $('review-controls').hidden=false; $('review-confirm-check').checked=false; }
     if (id==='import-category' && current) {
       const category = $('import-category').value.split('/').map(part=>part.trim()).join('/');
       $('import-target').value = current.resourceRoot+'/'+(category?category+'/':'')+$('import-target').value.split('/').at(-1);
     }
     if (id==='import-target' && current) $('import-category').value = $('import-target').value.startsWith(current.resourceRoot+'/') ? $('import-target').value.slice(current.resourceRoot.length+1).split('/').slice(0,-1).join('/') : '';
     $('import-handoff').hidden = true; $('import-status').textContent = '存在未保存修改；保存后会产生新的确认版本，旧审核不能复用。';
+    processingControls();
   });
   $('import-save').addEventListener('click',async()=>{
     if (!current || busy) return;
@@ -136,6 +279,7 @@ export function initImports(source = 'local') {
     const input={action:'check-update',id:current.id,version:current.version,...(selectedToken?{token:selectedToken}:{})};
     ++revision; setBusy(true); $('import-update-status').textContent='正在读取当前 IMA 原件并比对…';
     try {
+      input.processing=await processingConsent(current.title);
       const result=await api('/api/ima',input);
       if(result.changed) { show(result.job); setBusy(false); await refresh(); }
       $('import-update-status').textContent=(result.changed?(result.reused?'相同更新已有任务，已打开；没有重复暂存。':'发现变化，已创建新草稿；请对照正文和来源信息重新审核。'):(result.comparison?.metadataFields?.length?'原件及本次核对的来源信息未变化，没有创建新任务。':'原件内容未变化，没有创建新任务；本次未核对标题等来源信息。'))+(result.changed?updateChangeNotice(result.comparison):'')+localUpdateNotice(result.comparison);
@@ -156,7 +300,7 @@ export function initImports(source = 'local') {
     event.preventDefault(); if(busy || keepDraft() || !yuqueState?.configured) return;
     const input={action:'import',version:yuqueState.version,url:$('yuque-url').value.trim(),category:$('yuque-category').value.split('/').map(part=>part.trim()).join('/')};
     ++revision; setBusy(true); $('yuque-status').textContent='正在读取语雀正文并暂存…';
-    try { show(await api('/api/yuque',input)); setBusy(false); await refresh(); $('yuque-status').textContent='已暂存，请在下方核对正文、来源和未读取范围。'; }
+    try { input.processing=await processingConsent('此语雀文档'); show(await api('/api/yuque',input)); setBusy(false); await refresh(); $('yuque-status').textContent='已暂存，请在下方核对正文、来源和未读取范围。'; }
     catch(error) { $('yuque-status').textContent=error.message; }
     finally { setBusy(false); }
   });
@@ -235,9 +379,11 @@ export function initImports(source = 'local') {
     if(!category) { $('ima-status').textContent='请先填写主题分类。'; $('ima-category').focus(); return; }
     ++revision; setBusy(true); $('ima-status').textContent='正在读取所选资料并暂存…';
     try {
-      const job=await api('/api/ima',{action:'import',token:selectedToken,category});
+      const title=imaPage?.items.find(item=>item.token===selectedToken)?.title||'所选 IMA 资料';
+      const processing=await processingConsent(title);
+      const job=await api('/api/ima',{action:'import',token:selectedToken,category,processing});
       show(job); resetImaResults(); setBusy(false); await refresh();
-      $('ima-status').textContent='已暂存，请在下方核对来源、未读取范围与正文并导出审核交接。';
+      $('ima-status').textContent='已导入。查看下方整理结果，选择你想保留的内容。';
     } catch(error) { $('ima-status').textContent=error.message; }
     finally { setBusy(false); }
   });

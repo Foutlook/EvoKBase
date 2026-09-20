@@ -54,7 +54,7 @@ export function createModels(config) {
   }
   async function state() { return filename ? publicState(await load()) : {enabled:false,providers}; }
   async function save(input) {
-    if (busy) throw failure(409,'模型连接测试正在进行，请先取消或等待完成');
+    if (busy) throw failure(409,'模型请求正在进行，请先取消或等待完成');
     await checkPath(true);
     let lock;
     try { lock=await fs.open(filename+'.lock','wx',0o600); }
@@ -91,16 +91,38 @@ export function createModels(config) {
     }
     finally { busy=false; }
   }
-  return {state,save,test};
+  async function generate(input, messages, signal) {
+    if (busy) throw failure(409,'已有模型请求正在进行，请稍后重试');
+    busy=true;
+    try {
+      const data=await load(), entry=data.providers[input.provider];
+      if(input.version!==data.version || input.provider!==data.selected) throw failure(409,'模型配置已变化，请重新确认接收资料的渠道');
+      if(!entry) throw failure(409,'请先配置模型渠道');
+      // Flash defaults to high-effort thinking; use low effort with room for reasoning and final candidate JSON.
+      const options=input.provider==='deepseek' && entry.model==='deepseek-flash'?{thinking:{type:'enabled'},reasoning_effort:'low'}:{};
+      const result=await requestModel(entry,messages,16384,signal,90000,options);
+      if(result.finishReason==='length') throw failure(502,'模型输出达到长度上限，候选未采用；请缩短资料后重试');
+      if(typeof result.message.content!=='string' || !result.message.content.trim()) throw failure(502,'模型未返回最终正文，候选未采用；请核对模型模式后重试');
+      if(result.message.content.includes(entry.apiKey)) throw failure(502,'模型响应包含敏感配置，已丢弃');
+      if((await load()).version!==data.version) throw failure(409,'处理期间模型配置已变化，结果未采用');
+      return result.message.content;
+    } finally { busy=false; }
+  }
+  return {state,save,test,generate};
 }
 
 export async function probeModel(entry, signal, timeoutMs=30000) {
-  const deadline=AbortSignal.timeout(timeoutMs), combined=signal?AbortSignal.any([signal,deadline]):deadline;
   const start=Date.now();
+  await requestModel(entry,[{role:'user',content:'连接测试：请只回复 OK。'}],64,signal,timeoutMs);
+  return {status:'connected',elapsedMs:Date.now()-start};
+}
+
+async function requestModel(entry, messages, maxTokens, signal, timeoutMs, options={}) {
+  const deadline=AbortSignal.timeout(timeoutMs), combined=signal?AbortSignal.any([signal,deadline]):deadline;
   try {
     const response=await fetch(entry.baseUrl+'/chat/completions',{method:'POST',redirect:'error',signal:combined,
       headers:{'Content-Type':'application/json',Authorization:'Bearer '+entry.apiKey},
-      body:JSON.stringify({model:entry.model,messages:[{role:'user',content:'连接测试：请只回复 OK。'}],stream:false,max_tokens:64})});
+      body:JSON.stringify({model:entry.model,messages,stream:false,max_tokens:maxTokens,...options})});
     if(!response.ok) {
       await response.body?.cancel();
       const errors={401:'API Key 无效',403:'API Key 或模型访问权限不足',404:'接口或模型不存在',429:'请求限流或额度不足'};
@@ -111,8 +133,8 @@ export async function probeModel(entry, signal, timeoutMs=30000) {
     const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const message=result.choices?.[0]?.message;
     if(result.error || !message || ![message.content,message.reasoning_content].some(text=>typeof text==='string' && text.trim())) throw failure(502,'供应商未返回有效文本，请核对模型是否支持对话接口');
-    // Never relay provider output: a response can echo credentials or unrelated diagnostic data.
-    return {status:'connected',elapsedMs:Date.now()-start};
+    // The probe discards provider text; document processing validates it before exposing candidates.
+    return {message,finishReason:result.choices[0].finish_reason};
   } catch(error) {
     if(signal?.aborted) throw failure(499,'连接测试已取消');
     if(deadline.aborted) throw failure(504,'连接测试超时，请稍后重试');

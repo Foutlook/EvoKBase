@@ -8,6 +8,8 @@ import { createImports } from './imports.mjs';
 import { createModels } from './models.mjs';
 import { createIma } from './ima.mjs';
 import { createYuque } from './yuque.mjs';
+import { createProcessing } from './processing.mjs';
+import { createReview } from './review.mjs';
 
 const web = fileURLToPath(new URL('./web/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/imports.js': ['imports.js', 'text/javascript'], '/models.js': ['models.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
@@ -18,6 +20,20 @@ export async function startPortal(config, port = 4317) {
   const models = createModels(config);
   const ima = createIma(imports);
   const yuque = createYuque(imports);
+  const processing = createProcessing(imports,models,search,library);
+  const review = createReview(imports,processing,library);
+  async function afterImport(result,input) {
+    const job=result.changed?result.job:result.id?result:null;
+    if(job && input.processing) {
+      try { job.processing=await processing.enqueue(job.id,{...input.processing,sourceVersion:job.version}); }
+      catch(error) {
+        job.processingError=error.status?error.message:'自动处理未启动，资料已暂存';
+        try { job.processing=await processing.failed(job.id,job.processingError); }
+        catch { job.processing={status:'failed',error:job.processingError+'；处理状态未能保存，请刷新核对。'}; }
+      }
+    }
+    return result;
+  }
   const server = http.createServer(async (req, res) => {
     const authority = `127.0.0.1:${server.address().port}`;
     const origin = `http://${authority}`;
@@ -32,12 +48,25 @@ export async function startPortal(config, port = 4317) {
       const modelRoute = /^\/api\/models(?:\/test)?$/.test(url.pathname);
       const imaRoute = url.pathname === '/api/ima';
       const yuqueRoute = url.pathname === '/api/yuque';
-      if (req.method === 'POST' && (modelRoute || imaRoute || yuqueRoute || (imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)))) {
+      const processingRoute = /^\/api\/imports\/[a-f\d-]+\/processing$/.test(url.pathname);
+      const reviewRoute = /^\/api\/imports\/[a-f\d-]+\/review$/.test(url.pathname);
+      if (req.method === 'POST' && (modelRoute || imaRoute || yuqueRoute || processingRoute || reviewRoute || (imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)))) {
         if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'写入只接受本机页面的明确操作');
         let size = 0; const chunks = [];
-        for await (const chunk of req) { size += chunk.length; if (size > (modelRoute||imaRoute||yuqueRoute?16*1024:23*1024*1024)) throw failure(413,'请求超过大小限制'); chunks.push(chunk); }
+        for await (const chunk of req) { size += chunk.length; if (size > (reviewRoute?64*1024:modelRoute||imaRoute||yuqueRoute||processingRoute?16*1024:23*1024*1024)) throw failure(413,'请求超过大小限制'); chunks.push(chunk); }
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'请求不是有效 JSON'); }
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'请求无效');
+        if(reviewRoute) {
+          if(!imports) throw failure(503,'未启用资料导入');
+          if(!['prepare','confirm'].includes(input.action)) throw failure(400,'不支持的保存操作');
+          return send(200,'application/json; charset=utf-8',JSON.stringify(await review[input.action](url.pathname.split('/')[3],input)));
+        }
+        if(processingRoute) {
+          const id=url.pathname.split('/')[3];
+          if(!['start','cancel'].includes(input.action)) throw failure(400,'不支持的处理操作');
+          const result=input.action==='cancel'?await processing.cancel(id):await processing.enqueue(id,input);
+          return send(200,'application/json; charset=utf-8',JSON.stringify(result));
+        }
         if (modelRoute || imaRoute || yuqueRoute) {
           const controller = new AbortController();
           const cancel = () => { if (!res.writableEnded) controller.abort(); };
@@ -45,12 +74,13 @@ export async function startPortal(config, port = 4317) {
           if(res.destroyed) controller.abort();
           try {
             const data = yuqueRoute ? await yuque.run(input,controller.signal) : imaRoute ? await ima.run(input,controller.signal) : url.pathname.endsWith('/test') ? await models.test(input,controller.signal) : await models.save(input);
-            return send(200,'application/json; charset=utf-8',JSON.stringify(data));
+            return send(200,'application/json; charset=utf-8',JSON.stringify(imaRoute || yuqueRoute?await afterImport(data,input):data));
           } finally { res.removeListener('close',cancel); }
         }
         const id = url.pathname.split('/')[3];
         const result = id ? await imports.update(id,input) : await imports.create(input);
-        return send(200,'application/json; charset=utf-8',JSON.stringify(result));
+        if(id) result.processing=await processing.state(id);
+        return send(200,'application/json; charset=utf-8',JSON.stringify(id?result:await afterImport(result,input)));
       }
       if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('Allow', 'GET, HEAD'); throw failure(405, '只读入口；导入暂存仅允许专用入口'); }
       if (assets[url.pathname]) {
@@ -59,6 +89,8 @@ export async function startPortal(config, port = 4317) {
       }
       let result;
       if (url.pathname === '/api/models') result = await models.state();
+      else if (reviewRoute) result = await review.state(url.pathname.split('/')[3]);
+      else if (processingRoute) result = await processing.state(url.pathname.split('/')[3]);
       else if (imaRoute) result = await ima.state();
       else if (yuqueRoute) result = await yuque.state();
       else if (url.pathname === '/api/tree') result = await library.list();
@@ -78,7 +110,7 @@ export async function startPortal(config, port = 4317) {
           res.setHeader('Content-Disposition',`attachment; filename="review-${id}.md"`);
           return send(200,'text/markdown; charset=utf-8',await imports.handoff(id));
         }
-        result = await imports.preview(id);
+        result = {...await imports.preview(id),processing:await processing.state(id),review:await review.state(id)};
       }
       else if (url.pathname === '/api/search') result = await search.search(url.searchParams.get('q'));
       else if (url.pathname === '/api/search/page') result = await search.indexed(url.searchParams.get('slug'));
@@ -106,6 +138,7 @@ export async function startPortal(config, port = 4317) {
     }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  server.once('close',()=>processing.stop());
   return server;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

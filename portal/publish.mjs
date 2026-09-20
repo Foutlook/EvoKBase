@@ -52,27 +52,49 @@ async function writtenFiles(store, job, bytes) {
       if (digest(await fs.readFile(target)) !== digest(bytes[index])) throw failure(409,'本任务正式文件被修改，已停止恢复以保护后续编辑');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      if (job.stage !== 'writing') throw failure(409,'本任务正式文件缺失，请人工核对后恢复');
+      if (!['writing','archiving'].includes(job.stage)) throw failure(409,'本任务正式文件缺失，请人工核对后恢复');
       await plainPath(path.dirname(target),true);
       await fs.writeFile(target,bytes[index],{flag:'wx'});
     }
   }
 }
 
-// These functions are CLI-only. The web application cannot issue approvals, commits, pushes or retries.
+// Local saving uses the same immutable manifest and recovery checks; Git publication remains CLI-only.
+export async function archiveImport(store,id,approval) {
+  return store.locked(async()=>{
+    const {job,artifacts}=await store.load(id); review(job,approval);
+    if(!['draft','archiving','archived'].includes(job.stage)) throw failure(409,'此资料已进入同步流程，请核对状态');
+    store.requireCategory(job,artifacts[1].bytes);
+    if(job.stage==='draft') {
+      const target=path.join(store.root,job.target); await plainPath(target);
+      try { await fs.lstat(target); throw failure(409,'此位置已有资料，请修改保存位置；不会覆盖原文件'); }
+      catch(error) { if(error.code!=='ENOENT') throw error; }
+      job.stage='archiving'; job.approval={version:approval.version,reviewRef:approval.reviewRef,reviewedBy:approval.reviewedBy};
+      await store.save(job);
+    }
+    await plainPath(path.join(store.root,job.target),true);
+    await writtenFiles(store,job,artifacts.map(file=>file.bytes));
+    job.stage='archived'; job.archivedAt??=new Date().toISOString(); await store.save(job);
+    return job;
+  });
+}
+
 export async function commitImport(store, config, id, approval) {
   return store.locked(async()=>{
     const {job,artifacts} = await store.load(id); review(job,approval);
     if (job.commit) return job;
     const {head,remoteHead} = await repository(store,config);
     const files = store.outputPaths(job);
-    if (job.stage === 'draft') {
+    if (['draft','archived'].includes(job.stage)) {
       store.requireCategory(job,artifacts[1].bytes);
-      await clean(store);
+      await clean(store,job.stage==='archived'?files:[]);
       if (head !== remoteHead) throw failure(409,'本地与远程 main 不一致，禁止夹带其他待推送提交');
       await plainPath(path.join(store.root,job.target));
-      try { await fs.lstat(path.join(store.root,job.target)); throw failure(409,'目标目录已存在，请修改草稿目标并重新审核；不会覆盖同名资料'); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if(job.stage==='archived') await writtenFiles(store,job,artifacts.map(file=>file.bytes));
+      else {
+        try { await fs.lstat(path.join(store.root,job.target)); throw failure(409,'目标目录已存在，请修改草稿目标并重新审核；不会覆盖同名资料'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
       job.base = head; job.stage = 'writing'; job.approval = {version:approval.version,reviewRef:approval.reviewRef,reviewedBy:approval.reviewedBy};
       await store.save(job);
     } else if (!['writing','files_written'].includes(job.stage)) throw failure(409,'导入阶段不支持提交，请检查任务记录');

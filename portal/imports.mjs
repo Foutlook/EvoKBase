@@ -105,7 +105,7 @@ export async function createImports(config) {
     const folder = jobDirectory(id); await plainPath(folder);
     await plainPath(path.join(folder, 'job.json'));
     const job = JSON.parse(await fs.readFile(path.join(folder, 'job.json'), 'utf8'));
-    if (job.id !== id || !job.version || !['draft','writing','files_written','committed','pushed','refresh_failed','complete'].includes(job.stage)) throw failure(409, '导入记录不完整，请人工核对');
+    if (job.id !== id || !job.version || !['draft','archiving','archived','writing','files_written','committed','pushed','refresh_failed','complete'].includes(job.stage)) throw failure(409, '导入记录不完整，请人工核对');
     target(job.target);
     if (job.files && (!['pdf','docx','txt','bin'].includes(job.format) || !Array.isArray(job.files) || job.files.length<3 || job.files.length>303 || job.files[0]?.name!=='original.'+job.format || job.files[1]?.name!=='draft.md' || job.files[2]?.name!=='content.md' || job.files.slice(3).some(file=>!/^images\/\d{4}\.(?:png|jpg|jpeg|gif|webp|bin)$/.test(file.name)) || new Set(job.files.map(file=>file.name)).size!==job.files.length)) throw failure(409,'导入产物清单无效');
     const artifacts = [];
