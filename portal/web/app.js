@@ -1,5 +1,6 @@
 import { initGraph } from './graph.js';
 import { initImports } from './imports.js';
+import { initModels } from './models.js';
 
 const $ = id => document.getElementById(id);
 let files = [];
@@ -7,8 +8,12 @@ let current = new URL(location.href).searchParams.get('doc');
 const attachment = new URL(location.href).searchParams.get('attachment');
 const graphPage = new URL(location.href).searchParams.get('view') === 'graph';
 const searchPage = new URL(location.href).searchParams.get('view') === 'search';
-const importPage = new URL(location.href).searchParams.get('view') === 'imports';
-const importsView = importPage ? initImports() : null;
+const imaPage = new URL(location.href).searchParams.get('view') === 'ima';
+const yuquePage = new URL(location.href).searchParams.get('view') === 'yuque';
+const importPage = imaPage || yuquePage || new URL(location.href).searchParams.get('view') === 'imports';
+const modelsPage = new URL(location.href).searchParams.get('view') === 'models';
+const importsView = importPage ? initImports(yuquePage ? 'yuque' : imaPage ? 'ima' : 'local') : null;
+const modelsView = modelsPage ? initModels() : null;
 let revision = 0;
 const graphView = initGraph(() => current);
 if (graphPage) graphView.show();
@@ -22,8 +27,22 @@ if (searchPage) {
 }
 if (importPage) {
   $('document-view').hidden = true; $('import-panel').hidden = false; $('status').hidden = true;
+  document.body.classList.add('import-open');
+  $('import-navigation').hidden = false;
+  $('local-import-link').setAttribute('aria-current', imaPage || yuquePage ? 'false' : 'page');
+  $('ima-import-link').setAttribute('aria-current', imaPage ? 'page' : 'false');
+  $('yuque-import-link').setAttribute('aria-current', yuquePage ? 'page' : 'false');
+  $('ima-panel').hidden = !imaPage;
+  $('yuque-panel').hidden = !yuquePage;
+  $('import-heading').textContent = yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入';
+  $('import-intro').textContent = yuquePage ? '从一篇文档开始，把语雀资料带回知识库。' : imaPage ? '把个人知识库、收藏和笔记，带回你的知识库。' : '上传文件，保留原件，再核对内容与来源。';
   document.querySelector('.eyebrow').hidden = true;
-  document.querySelector('.skip').href = '#import-file'; document.querySelector('.skip').textContent = '跳到导入';
+  document.querySelector('.skip').href = yuquePage ? '#yuque-url' : imaPage ? '#ima-source' : '#import-file'; document.querySelector('.skip').textContent = '跳到导入';
+}
+if (modelsPage) {
+  $('document-view').hidden = true; $('model-panel').hidden = false; $('status').hidden = true;
+  document.querySelector('.eyebrow').hidden = true;
+  document.querySelector('.skip').href = '#model-provider'; document.querySelector('.skip').textContent = '跳到模型设置';
 }
 async function get(url) {
   const response = await fetch(url, { cache: 'no-store' });
@@ -33,7 +52,8 @@ async function get(url) {
 }
 function tree() {
   $('home-link').hidden = !files.includes('首页.md');
-  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !importPage && !attachment && current === '首页.md' ? 'page' : 'false');
+  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !importPage && !modelsPage && !attachment && current === '首页.md' ? 'page' : 'false');
+  $('model-view').setAttribute('aria-current', modelsPage ? 'page' : 'false');
   $('import-view').setAttribute('aria-current', importPage ? 'page' : 'false');
   $('search-view').setAttribute('aria-current', searchPage ? 'page' : 'false');
   $('graph-view').setAttribute('aria-current', graphPage ? 'page' : 'false');
@@ -62,7 +82,7 @@ function tree() {
         link.href = (markdown ? '/?doc=' : '/?attachment=') + encodeURIComponent(value);
         link.title = value;
         if (!markdown) link.className = 'attachment';
-        if (!graphPage && !searchPage && !importPage && value === (attachment || current)) link.setAttribute('aria-current', 'page');
+        if (!graphPage && !searchPage && !importPage && !modelsPage && value === (attachment || current)) link.setAttribute('aria-current', 'page');
         parent.append(link);
       }
     }
@@ -85,8 +105,12 @@ async function refresh() {
     current ??= files.find(p => p === '首页.md') ?? files.find(p => /\.md$/i.test(p));
     if (graphPage && (!files.includes(current) || !/\.md$/i.test(current))) current = files.find(p => /\.md$/i.test(p));
     tree();
+    if (modelsPage) {
+      $('breadcrumb').textContent = '模型渠道'; document.title = '模型渠道 · EvoKBase';
+      await modelsView.refresh(); return;
+    }
     if (importPage) {
-      $('breadcrumb').textContent = '导入资料'; document.title = '导入资料 · EvoKBase';
+      $('breadcrumb').textContent = yuquePage ? '资料导入 / 语雀' : imaPage ? '资料导入 / IMA' : '资料导入 / 本地文件'; document.title = (yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入') + ' · EvoKBase';
       await importsView.refresh(); return;
     }
     if (searchPage) {
@@ -165,6 +189,7 @@ async function refresh() {
     }
   } catch (error) {
     if (run !== revision) return;
+    if (modelsPage) { $('model-status').textContent = error.message; return; }
     if (importPage) { $('import-status').textContent = error.message; return; }
     if (searchPage) { $('search-status').textContent = `读取失败：${error.message}`; return; }
     if (graphPage) { $('graph-status').textContent = `关系图谱暂不可用：${error.message}。可刷新重试。`; return; }

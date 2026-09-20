@@ -15,6 +15,7 @@
     <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg></a>
     <a id="search-view" href="/?view=search" aria-label="搜索知识" title="搜索知识"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></a>
     <a id="import-view" href="/?view=imports" aria-label="导入资料" title="导入资料"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-7 5-5 5 5M4 15v6h16v-6"/></svg></a>
+    <a id="model-view" href="/?view=models" aria-label="模型渠道" title="模型渠道"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg></a>
   </nav>
   <aside class="sidebar" aria-label="知识目录">
     <a class="brand" href="/"><span>EvoKBase<small>知识目录</small></span></a>
@@ -24,6 +25,16 @@
     <small id="filter-hint" class="filter-hint">仅筛选左侧目录，不搜索正文</small>
     <nav id="tree" aria-label="目录树"></nav>
     <div class="sidebar-foot"><span class="dot"></span> 本机 · 只读浏览<small>在原文件中编辑，回到这里刷新。</small></div>
+  </aside>
+  <aside id="import-navigation" class="import-navigation" hidden aria-label="资料导入导航">
+    <a class="brand" href="/">EvoKBase</a>
+    <p class="import-nav-label">资料导入</p>
+    <nav aria-label="导入方式">
+      <a id="local-import-link" href="/?view=imports"><span>本地导入</span><small>上传电脑中的文件</small></a>
+      <a id="ima-import-link" href="/?view=ima"><span>IMA 导入</span><small>个人知识库与笔记</small></a>
+      <a id="yuque-import-link" href="/?view=yuque"><span>语雀导入</span><small>通过文档链接读取</small></a>
+    </nav>
+    <p class="import-nav-note">从资料到知识<br><span>保留原件 · 核对来源 · 审核归档</span></p>
   </aside>
   <main>
     <header class="toolbar"><span id="breadcrumb">你的知识，随手可读</span><button id="refresh" type="button">↻ 刷新</button></header>
@@ -38,20 +49,61 @@
         <div id="search-results"></div>
       </section>
       <section id="import-panel" hidden aria-label="导入资料">
-        <h1>导入资料</h1><p class="search-hint">先保留原件，再核对来源。支持 Markdown、DOCX 和文字版 PDF；扫描页会标明待识别。暂存不会触发知识发布。</p>
+        <header class="import-heading"><p class="import-kicker">收集，让知识有迹可循</p><h1 id="import-heading">本地导入</h1><p id="import-intro">上传文件，保留原件，再核对内容与来源。</p></header>
         <p id="import-status" role="status" aria-live="polite">正在读取导入配置…</p>
+        <section id="ima-panel" class="ima-panel" hidden aria-label="IMA 资料">
+          <form id="ima-form" hidden><fieldset id="ima-fields">
+            <div class="ima-source-bar">
+              <div><label for="ima-source">资料来源</label><select id="ima-source"><option value="knowledge">知识库 · 含个人知识</option><option value="notes">笔记</option></select></div>
+              <div id="ima-knowledge">
+                <label for="ima-library">知识库</label><div class="ima-library-controls"><select id="ima-library"><option value="">加载后选择知识库</option></select><button id="ima-libraries-load" type="button" class="secondary">加载知识库</button><button id="ima-libraries-more" type="button" class="quiet" disabled>更多</button></div>
+              </div>
+            </div>
+            <div class="ima-search-bar"><label class="visually-hidden" for="ima-query">关键词</label><input id="ima-query" type="search" maxlength="200" autocomplete="off" placeholder="搜索资料，留空可浏览全部"><button type="submit">搜索 / 浏览</button></div>
+            <div class="ima-list-heading"><h2>资料列表 <span id="ima-result-count"></span></h2><button id="ima-root" type="button" class="quiet">返回根目录 ↑</button></div>
+            <p id="ima-status" role="status" aria-live="polite">正在检查本机凭据…</p>
+            <fieldset id="ima-results" class="ima-results" aria-label="选择资料"></fieldset>
+            <p id="ima-empty" class="ima-empty">加载并选择一个知识库，开始浏览你的资料。</p>
+            <div class="ima-pagination"><button id="ima-prev" type="button" class="secondary" disabled>上一页</button><button id="ima-next" type="button" class="secondary" disabled>下一页</button></div>
+            <div class="ima-import-bar"><div><label for="ima-category">存入主题分类</label><input id="ima-category" list="import-categories" maxlength="160" placeholder="选择或输入分类"></div><button id="ima-import" type="button" disabled>暂存所选资料 →</button></div>
+          </fieldset></form>
+          <p id="ima-connection" class="search-hint" role="status"></p>
+          <details class="import-help"><summary>支持范围与连接设置</summary><p class="search-hint">支持 Markdown、TXT、DOCX、文字版 PDF 和静态网页。笔记读取纯文本，网页图片和附件不抓取；访问验证或导出权限受限的资料需从 IMA 客户端导出。</p><p class="search-hint">沿用本机 IMA 技能凭据：IMA_OPENAPI_CLIENTID / IMA_OPENAPI_APIKEY（优先兼容 IMA_CLIENT_ID / IMA_API_KEY），或用户目录 .config/ima 下的 client_id 和 api_key 文件。环境变量调整后重启门户，凭据不回传页面。</p><a href="https://ima.qq.com/agent-interface" target="_blank" rel="noopener noreferrer">前往 IMA 获取凭据 ↗</a></details>
+        </section>
+        <section id="yuque-panel" class="yuque-panel" hidden aria-label="语雀资料">
+          <p id="yuque-status" role="status" aria-live="polite">正在检查语雀配置…</p>
+          <details id="yuque-settings" class="import-help"><summary>连接语雀</summary>
+            <p id="yuque-key-status" class="search-hint"></p>
+            <form id="yuque-config" autocomplete="off"><fieldset id="yuque-config-fields">
+              <label for="yuque-token">语雀 Token</label><input id="yuque-token" type="password" required maxlength="4096" autocomplete="new-password" spellcheck="false" aria-describedby="yuque-storage-note" placeholder="粘贴你自己的 Token">
+              <p id="yuque-storage-note" class="search-hint">保存在本机用户目录 .config/evokbase/yuque.json（明文），不回传页面。Token 只发送至 www.yuque.com 官方 API；请勿分享凭据文件。</p>
+              <div class="yuque-config-actions"><button type="submit">保存 Token</button><button id="yuque-clear" type="button" class="quiet" disabled>清除本机 Token</button></div>
+            </fieldset></form>
+            <a href="https://www.yuque.com/settings/tokens" target="_blank" rel="noopener noreferrer">前往语雀配置 Token ↗</a>
+            <p class="search-hint">请确认账号可使用语雀开放 API，且 Token 对所选文档有读取权限；如已设置 YUQUE_TOKEN 环境变量，会优先使用，需在本机调整后重启门户。</p>
+          </details>
+          <form id="yuque-form"><fieldset id="yuque-fields" disabled>
+            <label for="yuque-url">文档链接</label><input id="yuque-url" type="url" required maxlength="2048" placeholder="https://www.yuque.com/用户/知识库/文档" autocomplete="off" aria-describedby="yuque-url-hint">
+            <p id="yuque-url-hint" class="search-hint">复制文档的完整链接。首版支持 yuque.com 普通文档，暂不支持企业独立域名、分享短链、表格与画板。</p>
+            <label for="yuque-category">存入主题分类</label><input id="yuque-category" list="import-categories" required maxlength="160" placeholder="选择或输入分类">
+            <div class="local-submit"><span>只读取这一篇，暂存后核对正文。</span><button type="submit">读取并暂存 →</button></div>
+          </fieldset></form>
+
+          <details class="import-help"><summary>会保留哪些内容？</summary><p class="search-hint">保留官方 API 返回的 Markdown 正文快照、文档标识、来源链接、获取时间及可获得的更新时间。图片、附件、评论、历史版本和外部链接不下载；富文本转换可能损失排版，请对照语雀原文审核。需要完整附件时，请从语雀导出后使用本地导入。</p></details>
+        </section>
         <form id="import-form" hidden>
-          <label for="import-file">Markdown · UTF-8，最多 4 MiB；DOCX / PDF · 最多 16 MiB</label><input id="import-file" type="file" accept=".md,.docx,.pdf" required>
-          <label for="import-title">资料标题（可选）</label><input id="import-title" maxlength="150" placeholder="默认使用文件名">
-          <label for="import-source">来源链接或说明（可选）</label><input id="import-source" maxlength="500" placeholder="例如原始文章链接；不填写无法核对的信息">
-          <label for="import-new-category">主题分类</label><input id="import-new-category" list="import-categories" maxlength="160" required placeholder="选择已有分类，或输入新分类 / 子分类">
-          <datalist id="import-categories"></datalist>
-          <button id="import-upload" type="submit">暂存并预览</button>
+          <div class="local-file-box"><span class="file-symbol" aria-hidden="true">↥</span><label for="import-file">选择一份资料</label><p>Markdown · Word · PDF</p><input id="import-file" type="file" accept=".md,.docx,.pdf" required aria-describedby="import-file-hint"><small id="import-file-hint">Markdown ≤ 4 MiB · DOCX / PDF ≤ 16 MiB · 扫描 PDF 暂不识别</small></div>
+          <div class="import-form-grid"><div><label for="import-title">资料标题 <span>可选</span></label><input id="import-title" maxlength="150" placeholder="默认使用文件名"></div><div><label for="import-new-category">存入主题分类</label><input id="import-new-category" list="import-categories" maxlength="160" required placeholder="选择或输入分类"></div></div>
+          <label for="import-source">来源链接或说明 <span>可选</span></label><input id="import-source" maxlength="500" placeholder="保留原始文章链接或出处，方便日后追溯">
+          <div class="local-submit"><span>仅暂存，审核后再归档。</span><button id="import-upload" type="submit">暂存并预览 →</button></div>
         </form>
-        <label for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select>
+        <datalist id="import-categories"></datalist>
+        <div class="import-resume"><div><h2>暂存与审核</h2><p>继续处理已暂存的资料，所有来源共用审核区。</p></div><div><label class="visually-hidden" for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select></div></div>
         <section id="import-draft" hidden>
           <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p><p id="import-warnings" class="search-version"></p>
-          <a id="import-download" download>下载完整原件，对照核对</a>
+          <a id="import-download" download>下载原件或接口快照，对照核对</a>
+          <div id="import-source-update" hidden><button id="import-check-update" type="button">检查 IMA 更新</button><p id="import-update-status" class="search-hint" role="status" aria-live="polite"></p></div>
+          <details id="import-previous" hidden><summary>更新前的正文与来源（与当前版本对照）</summary><p id="import-previous-info" class="search-hint"></p><pre id="import-previous-text"></pre></details>
           <details open><summary>正文预览（自动解析不代表全文已读）</summary><article id="import-preview"></article></details>
           <details><summary>Markdown 文本（Word / PDF 为解析结果）</summary><pre id="import-original"></pre></details>
           <label for="import-category">主题分类</label><input id="import-category" list="import-categories" maxlength="160" placeholder="例如：编程基础 / 位运算">
@@ -63,6 +115,22 @@
           <a id="import-handoff" download>导出审核交接任务</a>
           <p class="search-hint">将交接任务交给现有 Codex 渠道，核对具体内容并确认。网页不替代审核，也不自动提交或推送。</p>
         </section>
+      </section>
+      <section id="model-panel" hidden aria-label="模型渠道">
+        <p class="model-kicker">连接你的模型</p><h1>模型渠道</h1>
+        <p class="search-hint">选择供应商，使用自己的 API Key。每个供应商的配置独立保存。</p>
+        <p id="model-status" role="status" aria-live="polite">正在读取模型设置…</p>
+        <form id="model-form" hidden autocomplete="off">
+          <label for="model-provider">供应商</label><select id="model-provider"></select>
+          <div class="model-doc-line"><span id="model-hint"></span> <a id="model-docs" target="_blank" rel="noopener noreferrer">官方文档 ↗</a></div>
+          <label for="model-name">模型名称</label><input id="model-name" required maxlength="200" spellcheck="false" autocomplete="off">
+          <label for="model-base-url">API 地址</label><input id="model-base-url" type="url" required maxlength="500" spellcheck="false">
+          <label for="model-key">API Key</label><input id="model-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" aria-describedby="model-key-status model-storage-note">
+          <p id="model-key-status" class="search-hint"></p>
+          <p id="model-storage-note" class="search-hint">密钥保存在本机独立配置文件中（明文），请勿分享此文件；保存后不会回传页面。</p>
+          <div class="model-actions"><button id="model-save" type="submit">保存配置</button><button id="model-test" type="button" class="secondary" disabled>测试连接</button><button id="model-cancel" type="button" class="secondary" hidden>取消测试</button><button id="model-remove" type="button" class="quiet" disabled>清除此渠道</button></div>
+          <p class="model-test-note">测试仅向所选供应商发送“连接测试：请只回复 OK。”，可能产生少量 API 费用；不读取或发送知识库资料。当前先验证连接，资料处理按原流程进行。</p>
+        </form>
       </section>
       <div id="document-view">
       <article id="article" tabindex="-1"></article>

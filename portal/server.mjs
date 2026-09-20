@@ -5,13 +5,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLibrary, types, failure } from './library.mjs';
 import { createSearch } from './search.mjs';
 import { createImports } from './imports.mjs';
+import { createModels } from './models.mjs';
+import { createIma } from './ima.mjs';
+import { createYuque } from './yuque.mjs';
 
 const web = fileURLToPath(new URL('./web/', import.meta.url));
-const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/imports.js': ['imports.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
+const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/graph.js': ['graph.js', 'text/javascript'], '/imports.js': ['imports.js', 'text/javascript'], '/models.js': ['models.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/vendor/d3.min.js': ['../node_modules/d3/dist/d3.min.js', 'text/javascript'], '/vendor/d3.LICENSE': ['../node_modules/d3/LICENSE', 'text/plain'] };
 export async function startPortal(config, port = 4317) {
   const library = await createLibrary(config);
   const search = createSearch(config.gbrain, library);
   const imports = await createImports(config);
+  const models = createModels(config);
+  const ima = createIma(imports);
+  const yuque = createYuque(imports);
   const server = http.createServer(async (req, res) => {
     const authority = `127.0.0.1:${server.address().port}`;
     const origin = `http://${authority}`;
@@ -23,12 +29,25 @@ export async function startPortal(config, port = 4317) {
     try {
       if (req.headers.host !== authority || (req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') throw failure(403, '仅允许本机同源访问');
       const url = new URL(req.url, origin);
-      if (req.method === 'POST' && imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)) {
-        if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'导入只接受本机页面的明确操作');
+      const modelRoute = /^\/api\/models(?:\/test)?$/.test(url.pathname);
+      const imaRoute = url.pathname === '/api/ima';
+      const yuqueRoute = url.pathname === '/api/yuque';
+      if (req.method === 'POST' && (modelRoute || imaRoute || yuqueRoute || (imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)))) {
+        if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'写入只接受本机页面的明确操作');
         let size = 0; const chunks = [];
-        for await (const chunk of req) { size += chunk.length; if (size > 23 * 1024 * 1024) throw failure(413,'导入请求超过限制'); chunks.push(chunk); }
-        let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'导入请求不是有效 JSON'); }
-        if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'导入请求无效');
+        for await (const chunk of req) { size += chunk.length; if (size > (modelRoute||imaRoute||yuqueRoute?16*1024:23*1024*1024)) throw failure(413,'请求超过大小限制'); chunks.push(chunk); }
+        let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'请求不是有效 JSON'); }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'请求无效');
+        if (modelRoute || imaRoute || yuqueRoute) {
+          const controller = new AbortController();
+          const cancel = () => { if (!res.writableEnded) controller.abort(); };
+          res.once('close', cancel);
+          if(res.destroyed) controller.abort();
+          try {
+            const data = yuqueRoute ? await yuque.run(input,controller.signal) : imaRoute ? await ima.run(input,controller.signal) : url.pathname.endsWith('/test') ? await models.test(input,controller.signal) : await models.save(input);
+            return send(200,'application/json; charset=utf-8',JSON.stringify(data));
+          } finally { res.removeListener('close',cancel); }
+        }
         const id = url.pathname.split('/')[3];
         const result = id ? await imports.update(id,input) : await imports.create(input);
         return send(200,'application/json; charset=utf-8',JSON.stringify(result));
@@ -39,7 +58,10 @@ export async function startPortal(config, port = 4317) {
         return send(200, type + '; charset=utf-8', req.method === 'HEAD' ? '' : await fs.readFile(path.join(web, file)));
       }
       let result;
-      if (url.pathname === '/api/tree') result = await library.list();
+      if (url.pathname === '/api/models') result = await models.state();
+      else if (imaRoute) result = await ima.state();
+      else if (yuqueRoute) result = await yuque.state();
+      else if (url.pathname === '/api/tree') result = await library.list();
       else if (/^\/api\/imports\/[a-f\d-]+\/file$/.test(url.pathname)) {
         if (!imports) throw failure(503,'未配置导入暂存目录');
         const file = url.searchParams.get('path');
@@ -93,6 +115,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const port = args[3] === undefined ? 4317 : Number(args[3]);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('端口必须为 1—65535');
     const config = JSON.parse(await fs.readFile(args[1], 'utf8'));
+    if (config.models === undefined) config.models = {file:path.resolve(args[1])+'.models.json'};
     const server = await startPortal(config, port);
     console.log(`EvoKBase 只读门户：http://127.0.0.1:${server.address().port}`);
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close());

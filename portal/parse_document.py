@@ -7,6 +7,7 @@ import sys
 import zipfile
 from importlib.metadata import version
 from pathlib import PurePosixPath
+from html.parser import HTMLParser
 
 MAX_OUTPUT = 32 * 1024 * 1024
 
@@ -127,6 +128,51 @@ def extract(data, kind):
             except Exception:
                 warnings.append(f'第 {number} 页：图片清单读取失败，请对照 PDF 原件')
         parser = 'pypdf ' + version('pypdf')
+    elif kind == 'html':
+        # Preserve the fetched bytes separately; parse inert static text without fetching assets or running scripts.
+        charset = re.search(br'<meta\b[^>]*charset\s*=\s*["\x27]?\s*([a-zA-Z0-9_-]+)', data[:8192], re.I)
+        encoding = charset.group(1).decode('ascii').lower() if charset else 'utf-8'
+        if encoding not in ('utf-8', 'utf8', 'gbk', 'gb2312', 'gb18030', 'big5'):
+            raise ValueError('网页字符编码未支持，请导出为 UTF-8 文件')
+        text = data.decode(encoding, errors='strict')
+
+        class StaticText(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.parts, self.ignored = [], []
+                self.nodes = 0
+
+            def handle_starttag(self, tag, attrs):
+                self.nodes += 1
+                if self.nodes > 100000:
+                    raise ValueError('网页结构超过解析限制')
+                if tag in ('head', 'script', 'style', 'template', 'noscript', 'svg', 'iframe', 'object'):
+                    self.ignored.append(tag)
+                elif not self.ignored and tag in ('p', 'div', 'br', 'li', 'tr', 'section', 'article', 'h1', 'h2', 'h3', 'h4'):
+                    self.parts.append('\n')
+
+            def handle_endtag(self, tag):
+                if tag in self.ignored:
+                    self.ignored = self.ignored[:self.ignored.index(tag)]
+                elif not self.ignored and tag in ('p', 'div', 'li', 'tr', 'section', 'article', 'h1', 'h2', 'h3', 'h4'):
+                    self.parts.append('\n')
+
+            def handle_data(self, value):
+                if not self.ignored:
+                    self.parts.append(value)
+
+        document = StaticText()
+        document.feed(text)
+        document.close()
+        plain = re.sub(r'\n[ \t\r]*\n(?:[ \t\r]*\n)*', '\n\n', ''.join(document.parts)).strip()
+        if not plain:
+            raise ValueError('网页没有可提取的静态正文，请使用客户端导出')
+        if any(marker in plain[:3000] for marker in ('环境异常', '完成验证后即可继续访问', '访问过于频繁')):
+            raise ValueError('网页返回访问验证或限流提示，未把提示页当正文导入')
+        fence = '`' * max(3, max((len(m.group()) + 1 for m in re.finditer(r'`+', plain)), default=3))
+        sections.append(f'{fence}text\n{plain}\n{fence}')
+        warnings.append('仅提取下载时 HTML 的静态文字，可能包含导航等页面文字；不执行脚本，不读取动态正文、图片、附件、音视频或外链。网页快照以 .bin 保存供下载，不在门户执行。请对照原网页核对完整性。')
+        parser = 'Python html.parser / static text v1'
     else:
         raise ValueError('不支持的解析格式')
     markdown = '# 解析正文（未审核）\n\n' + '\n\n'.join('> '+w for w in warnings) + '\n\n' + '\n\n'.join(sections) + '\n'
