@@ -280,32 +280,47 @@ test('GBrain 只读搜索保留参数和顺序，核对来源、路径、版本�
   assert.equal((await search()).status, 503);
 });
 
-test('搜索页清空后刷新会移除旧查询，迟到响应不恢复旧结果', async () => {
+test('搜索清空不恢复迟到结果；目录在桌面和窄屏开合并支持Esc恢复焦点', async () => {
   // Run the real page controller against a minimal DOM; no browser library or production test hooks.
   const nodes = new Map();
   const node = id => {
-    if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', children: [], attributes: {},
+    if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', children: [], attributes: {}, events:{},
       setAttribute(key, value) { this.attributes[key] = value; },
-      replaceChildren(...children) { this.children = children; }, addEventListener() {} });
+      replaceChildren(...children) { this.children = children; }, addEventListener(name,fn) {this.events[name]=fn;}, focus() {this.focused=true;} });
     return nodes.get(id);
   };
-  let finishSearch, searchStarted;
+  let finishSearch, searchStarted, finishDocument;
   const started = new Promise(resolve => { searchStarted = resolve; });
   const pending = new Promise(resolve => { finishSearch = resolve; });
+  const pendingDocument = new Promise(resolve => { finishDocument = resolve; });
   const requests = [], location = { href: 'http://127.0.0.1/?view=search&q=old' };
+  const classes = new Set();
+  const media={matches:false,addEventListener(_name,fn) {this.changed=fn;}},events={},windowEvents={};
+  let importInitializations=0, modelInitializations=0;
+  const sources=[],historyEntries=[];
   const context = vm.createContext({ URL, location,
-    history: { replaceState(_state, _title, url) { location.href = String(url); } },
-    document: { getElementById: node, querySelector: node },
+    window: { matchMedia: () => media, addEventListener(name,fn) {windowEvents[name]=fn;}, scrollTo() {} },
+    history: { replaceState(_state, _title, url) { location.href = String(url); }, pushState(_state,_title,url) {historyEntries.push(location.href);location.href=String(url);} },
+    document: { getElementById: node, querySelector: node, addEventListener(name,fn) {events[name]=fn;}, body:{classList:{add:name=>classes.add(name),contains:name=>classes.has(name),remove:name=>classes.delete(name),toggle(name,force){const value=force??!classes.has(name);if(value)classes.add(name);else classes.delete(name);return value;}}} },
     initGraph: () => ({ invalidate() {} }),
+    initImports: () => {importInitializations++; return {activate:async source=>sources.push(source)};},
+    initModels: () => {modelInitializations++; return {refresh:async()=>{}};},
     fetch: async url => {
       requests.push(url);
       if (url === '/api/tree') return {ok:true, json:async()=>({files:[],warnings:[]})};
+      if (url.startsWith('/api/document')) return pendingDocument;
       searchStarted(); return pending;
     }
   });
   const source = (await fs.readFile(new URL('../web/app.js', import.meta.url), 'utf8')).replace(/^import .*?;\r?\n/gm, '');
   vm.runInContext(source, context);
   await started;
+  assert.equal(node('directory-toggle').attributes['aria-expanded'],'true');
+  node('directory-toggle').events.click();assert.ok(classes.has('directory-collapsed'));
+  media.matches=true;media.changed();assert.equal(node('directory-toggle').attributes['aria-expanded'],'false');
+  node('directory-toggle').events.click();assert.ok(classes.has('directory-open'));assert.ok(node('filter').focused);
+  events.keydown({key:'Escape'});assert.ok(!classes.has('directory-open'));assert.ok(node('directory-toggle').focused);
+  node('directory-toggle').events.click();node('directory-close').events.click();assert.equal(node('directory-toggle').attributes['aria-expanded'],'false');
   node('query').value = '';
   await vm.runInContext('refresh()', context);
   assert.equal(new URL(location.href).searchParams.has('q'), false);
@@ -316,4 +331,31 @@ test('搜索页清空后刷新会移除旧查询，迟到响应不恢复旧结�
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(node('search-status').textContent, '输入内容后搜索。');
   assert.equal(requests.filter(url=>url.startsWith('/api/search')).length, 1);
+  const shell=node('model-view'),form=node('import-title'); form.value='未保存的标题';
+  async function click(href,attributes={},modifiers={}) {
+    let prevented=false;
+    events.click({button:0,...modifiers,preventDefault(){prevented=true;},target:{closest:()=>({getAttribute:key=>key==='href'?href:attributes[key],hasAttribute:key=>key in attributes})}});
+    await new Promise(resolve=>setImmediate(resolve));
+    return prevented;
+  }
+  assert.equal(await click('/?view=imports'),true);
+  assert.equal(node('import-panel').hidden,false);
+  await click('/?view=models'); await click('/?view=ima'); await click('/?view=yuque'); await click('/?view=imports');
+  assert.deepEqual(sources,['local','ima','yuque','local']);
+  assert.equal(importInitializations,1); assert.equal(modelInitializations,1);
+  assert.equal(node('model-view'),shell); assert.equal(node('import-title'),form); assert.equal(form.value,'未保存的标题');
+  const count=historyEntries.length;
+  await click('/?view=imports'); assert.equal(historyEntries.length,count);
+  location.href=historyEntries.pop(); windowEvents.popstate();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(node('yuque-panel').hidden,false); assert.equal(node('yuque-import-link').attributes['aria-current'],'page');
+  for(const [href,attrs,mods] of [['https://example.com/'],['/file?path=test.md'],['#article'],['/?view=other'],['/?view=models',{target:'_blank'}],['/?doc=test.md',{download:''}],['/?view=models',{}, {ctrlKey:true}]]) {
+    assert.equal(await click(href,attrs,mods),false);
+  }
+  assert.equal(requests.filter(url=>url==='/api/tree').length,2,'菜单切换复用文件目录，手动刷新仍重新读取');
+  await click('/?doc=slow.md'); await click('/?view=models');
+  finishDocument({ok:true,json:async()=>({path:'slow.md',html:'迟到的文档'})});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(node('breadcrumb').textContent,'模型渠道'); assert.equal(node('model-panel').hidden,false);
+  assert.notEqual(node('article').innerHTML,'迟到的文档','离开文档后丢弃旧请求，不覆盖新页面');
 });

@@ -4,6 +4,8 @@ export function initImports(source = 'local') {
   let current, revision = 0, busy = false, imaPage, imaLibrariesNext, imaFolder='', imaRequests=[], selectedToken='', yuqueState;
   let processingState, pollTimer, modelConfigured=false;
   let candidateDirty=false, candidateFields=[], displayedRun;
+  let enabled=false;
+  const connectedSources=new Set();
   const knowledgeMode=()=>$('ima-source').value==='knowledge';
   function imaControls() {
     $('ima-fields').disabled=busy;
@@ -133,8 +135,8 @@ export function initImports(source = 'local') {
   async function processingConsent(title,force=false) {
     if(!force && !$('import-auto-process').checked) return undefined;
     const state=await api('/api/models'), provider=state.providers?.find(item=>item.id===state.selected);
-    if(!state.enabled || !provider?.hasKey) throw Error('请先配置模型，或取消导入后自动处理。');
-    if(!window.confirm(`导入后由后端自动处理《${title}》。\n将本篇正文及最多 3 份召回的旧知识片段发送至 ${provider.name}（${provider.baseUrl}），模型 ${provider.model}；可能产生 API 用量。\n结果仅作为待审候选，不自动发布。是否继续？`)) throw Error('已取消本次操作，未发送资料。');
+    if(!state.enabled || !provider?.available) throw Error('请先选择已安装的本地 Harness，或取消自动整理。');
+    if(!window.confirm(`使用本机 ${provider.name} 整理《${title}》。\n会将本篇正文及最多 3 份旧知识片段交给 Harness，由其已登录的模型处理，可能产生用量。\n本地调用不等于离线；整理结果由你审核后保存。是否继续？`)) throw Error('已取消本次操作，未发送资料。');
     return {confirmed:true,provider:provider.id,modelVersion:state.version};
   }
   $('processing-start').addEventListener('click',async()=>{
@@ -189,41 +191,45 @@ export function initImports(source = 'local') {
     showConfirmation(); processingControls();
     if(job.processingError) $('processing-status').textContent='资料已暂存，但自动处理未启动：'+job.processingError;
   }
-  async function refresh() {
-    if (busy || keepDraft()) return;
+  async function refresh(preserveDraft=false) {
+    if (busy || (!preserveDraft && keepDraft())) return;
     const run = ++revision;
     try {
       const data = await api('/api/imports'); if (run !== revision) return;
-      $('import-form').hidden = source !== 'local' || !data.enabled;
-      $('import-status').textContent = data.enabled ? '' : '未配置独立暂存目录；现有浏览和搜索仍可使用。';
+      enabled=data.enabled;
+      $('import-form').hidden = source !== 'local' || !enabled;
+      if (!preserveDraft || !current) $('import-status').textContent = enabled ? '' : '未配置独立暂存目录；现有浏览和搜索仍可使用。';
       $('import-jobs').replaceChildren(new Option('选择已有导入任务',''));
       $('import-categories').replaceChildren(...(data.categories || []).map(name=>new Option(name,name)));
       for (const job of data.jobs) $('import-jobs').append(new Option(`${job.title} · ${stages[job.stage]}`,job.id));
+      if (current) $('import-jobs').value=current.id;
       try {
         const state=await api('/api/models'); if(run!==revision) return;
         const provider=state.providers?.find(item=>item.id===state.selected);
-        modelConfigured=Boolean(state.enabled && provider?.hasKey);
-        $('import-model-status').textContent=modelConfigured?`${provider.name} · ${provider.model}。新导入会按此渠道生成待审候选。`:'模型未配置，仍可仅暂存资料；配置后可生成候选。';
-      } catch { modelConfigured=false; $('import-model-status').textContent='模型配置暂不可用，仍可仅暂存资料。'; }
+        modelConfigured=Boolean(state.enabled && provider?.available);
+        $('import-model-status').textContent=modelConfigured?`本地 ${provider.name} · ${provider.model}。导入后由此 Harness 整理。`:'请在模型渠道选择已安装的 Harness；仍可直接导入原文。';
+      } catch { if(run!==revision) return; modelConfigured=false; $('import-model-status').textContent='本地 Harness 暂不可用，仍可直接导入原文。'; }
       $('import-auto-process').disabled=!modelConfigured; if(!modelConfigured) $('import-auto-process').checked=false;
-      if (current) { $('import-jobs').value = current.id; const job = await api('/api/imports/'+current.id); if (run === revision && !keepDraft()) show(job); }
-      if (source === 'ima') try {
+      if (current && !preserveDraft) { const job = await api('/api/imports/'+current.id); if (run !== revision) return; if (!keepDraft()) show(job); }
+      if (source === 'ima' && (!preserveDraft || !connectedSources.has('ima'))) try {
         const ima=await api('/api/ima'); if(run!==revision) return;
         $('ima-form').hidden=!ima.enabled || !ima.configured;
         $('ima-connection').textContent=!ima.enabled?'请先配置独立暂存目录。':ima.configured?'已连接本机 IMA 凭据 · 仅在暂存或手动检查更新时读取正文。':'未找到完整 IMA 凭据，请展开连接设置。';
         if (!imaPage) $('ima-status').textContent='选择知识库后浏览或搜索，也可以切换到笔记。';
-      } catch(error) { $('ima-form').hidden=true; $('ima-connection').textContent=error.message; }
-      if (source === 'yuque') {
-        $('yuque-token').value='';
+        connectedSources.add('ima');
+      } catch(error) { if(run!==revision) return; $('ima-form').hidden=true; $('ima-connection').textContent=error.message; }
+      if (source === 'yuque' && (!preserveDraft || !connectedSources.has('yuque'))) {
+        if (!preserveDraft) $('yuque-token').value='';
         try {
           const state=await api('/api/yuque'); if(run!==revision) return;
           yuqueState=state; setBusy(false);
           $('yuque-key-status').textContent=state.environment?'正在使用本机 YUQUE_TOKEN 环境变量，页面不修改此凭据。':state.configured?'本机 Token 已保存，不回显；填写新 Token 可替换。':'还没有配置 Token。';
           $('yuque-status').textContent=!state.enabled?'请先配置独立暂存目录。':state.configured?'Token 已配置；读取文档时会验证访问权限。':'先连接语雀，再粘贴文档链接。';
           $('yuque-settings').open=!state.configured;
-        } catch(error) { yuqueState=null; setBusy(false); $('yuque-status').textContent=error.message; }
+          connectedSources.add('yuque');
+        } catch(error) { if(run!==revision) return; yuqueState=null; setBusy(false); $('yuque-status').textContent=error.message; }
       }
-    } catch(error) { $('import-status').textContent = error.message; }
+    } catch(error) { if(run===revision) $('import-status').textContent = error.message; }
   }
   $('import-form').addEventListener('submit',async event=>{
     event.preventDefault(); if (busy || keepDraft()) return; const file = $('import-file').files[0]; if (!file) return;
@@ -387,5 +393,10 @@ export function initImports(source = 'local') {
     } catch(error) { $('ima-status').textContent=error.message; }
     finally { setBusy(false); }
   });
-  return {refresh};
+  return {refresh, activate(nextSource) {
+    source=nextSource;
+    $('import-form').hidden=source!=='local' || !enabled;
+    // Navigation reuses the live draft and form nodes, including unsaved selections and files.
+    return refresh(true);
+  }};
 }

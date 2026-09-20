@@ -148,7 +148,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const port = args[3] === undefined ? 4317 : Number(args[3]);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('端口必须为 1—65535');
     const config = JSON.parse(await fs.readFile(args[1], 'utf8'));
-    if (config.models === undefined) config.models = {file:path.resolve(args[1])+'.models.json'};
+    if (config.harnesses === undefined) config.harnesses = {file:path.resolve(args[1])+'.harness.json'};
     const server = await startPortal(config, port);
     console.log(`EvoKBase 只读门户：http://127.0.0.1:${server.address().port}`);
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close());

@@ -4,45 +4,76 @@ import { initModels } from './models.js';
 
 const $ = id => document.getElementById(id);
 let files = [];
-let current = new URL(location.href).searchParams.get('doc');
-const attachment = new URL(location.href).searchParams.get('attachment');
-const graphPage = new URL(location.href).searchParams.get('view') === 'graph';
-const searchPage = new URL(location.href).searchParams.get('view') === 'search';
-const imaPage = new URL(location.href).searchParams.get('view') === 'ima';
-const yuquePage = new URL(location.href).searchParams.get('view') === 'yuque';
-const importPage = imaPage || yuquePage || new URL(location.href).searchParams.get('view') === 'imports';
-const modelsPage = new URL(location.href).searchParams.get('view') === 'models';
-const importsView = importPage ? initImports(yuquePage ? 'yuque' : imaPage ? 'ima' : 'local') : null;
-const modelsView = modelsPage ? initModels() : null;
+let current, attachment, graphPage, searchPage, imaPage, yuquePage, importPage, modelsPage;
+let importsView, modelsView, listing;
+const directoryMedia = window.matchMedia('(max-width: 760px)');
+function directoryState() {
+  $('directory-toggle').setAttribute('aria-expanded', String(directoryMedia.matches ? document.body.classList.contains('directory-open') : !document.body.classList.contains('directory-collapsed')));
+}
+directoryMedia.addEventListener('change', directoryState);
+directoryState();
+$('directory-toggle').addEventListener('click', () => {
+  document.body.classList.toggle(directoryMedia.matches ? 'directory-open' : 'directory-collapsed');
+  directoryState();
+  if (directoryMedia.matches && document.body.classList.contains('directory-open')) $('filter').focus();
+});
+$('directory-close').addEventListener('click', () => {
+  document.body.classList.remove('directory-open');
+  directoryState();
+  $('directory-toggle').focus();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.body.classList.contains('directory-open')) {
+    document.body.classList.remove('directory-open');
+    $('directory-toggle').setAttribute('aria-expanded', 'false');
+    $('directory-toggle').focus();
+  }
+});
 let revision = 0;
 const graphView = initGraph(() => current);
-if (graphPage) graphView.show();
-if (searchPage) {
-  $('document-view').hidden = true;
-  $('search-panel').hidden = false;
-  $('status').hidden = true;
-  document.querySelector('.eyebrow').hidden = true;
-  document.querySelector('.skip').href = '#query';
-  document.querySelector('.skip').textContent = '跳到搜索';
-}
-if (importPage) {
-  $('document-view').hidden = true; $('import-panel').hidden = false; $('status').hidden = true;
-  document.body.classList.add('import-open');
-  $('import-navigation').hidden = false;
-  $('local-import-link').setAttribute('aria-current', imaPage || yuquePage ? 'false' : 'page');
-  $('ima-import-link').setAttribute('aria-current', imaPage ? 'page' : 'false');
-  $('yuque-import-link').setAttribute('aria-current', yuquePage ? 'page' : 'false');
-  $('ima-panel').hidden = !imaPage;
-  $('yuque-panel').hidden = !yuquePage;
-  $('import-heading').textContent = yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入';
-  $('import-intro').textContent = yuquePage ? '从一篇文档开始，把语雀资料带回知识库。' : imaPage ? '把个人知识库、收藏和笔记，带回你的知识库。' : '上传文件，保留原件，再核对内容与来源。';
-  document.querySelector('.eyebrow').hidden = true;
-  document.querySelector('.skip').href = yuquePage ? '#yuque-url' : imaPage ? '#ima-source' : '#import-file'; document.querySelector('.skip').textContent = '跳到导入';
-}
-if (modelsPage) {
-  $('document-view').hidden = true; $('model-panel').hidden = false; $('status').hidden = true;
-  document.querySelector('.eyebrow').hidden = true;
-  document.querySelector('.skip').href = '#model-provider'; document.querySelector('.skip').textContent = '跳到模型设置';
+function route() {
+  const params = new URL(location.href).searchParams;
+  current = params.get('doc'); attachment = params.get('attachment');
+  graphPage = params.get('view') === 'graph'; searchPage = params.get('view') === 'search';
+  imaPage = params.get('view') === 'ima'; yuquePage = params.get('view') === 'yuque';
+  importPage = imaPage || yuquePage || params.get('view') === 'imports'; modelsPage = params.get('view') === 'models';
+  document.body.classList.toggle('workspace-wide', searchPage || importPage || modelsPage);
+  document.body.classList.toggle('import-open', importPage);
+  document.body.classList.toggle('graph-open', graphPage);
+  document.body.classList.remove('directory-open');
+  if (!graphPage) {
+    document.body.classList.remove('graph-expanded');
+    $('graph-expand').setAttribute('aria-pressed', 'false'); $('graph-expand').textContent = '展开画布';
+  }
+  $('directory-toggle').hidden = searchPage || importPage || modelsPage || graphPage;
+  directoryState();
+  $('document-view').hidden = graphPage || searchPage || importPage || modelsPage;
+  $('search-panel').hidden = !searchPage; $('import-panel').hidden = !importPage;
+  $('model-panel').hidden = !modelsPage; $('relations').hidden = !graphPage;
+  $('status').hidden = searchPage || importPage || modelsPage;
+  document.querySelector('.eyebrow').hidden = graphPage || searchPage || importPage || modelsPage;
+  document.querySelector('.skip').href = '#article'; document.querySelector('.skip').textContent = '跳到正文';
+  if (searchPage && params.has('q')) $('query').value = params.get('q');
+  navigation();
+  if (graphPage) graphView.show();
+  if (searchPage) {
+    document.querySelector('.skip').href = '#query';
+    document.querySelector('.skip').textContent = '跳到搜索';
+  }
+  if (importPage) {
+    $('ima-panel').hidden = !imaPage;
+    $('yuque-panel').hidden = !yuquePage;
+    $('import-heading').textContent = yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入';
+    $('import-intro').textContent = yuquePage ? '从一篇文档开始，把语雀资料带回知识库。' : imaPage ? '把个人知识库、收藏和笔记，带回你的知识库。' : '上传文件，保留原件，再核对内容与来源。';
+    document.querySelector('.skip').href = yuquePage ? '#yuque-url' : imaPage ? '#ima-source' : '#import-file'; document.querySelector('.skip').textContent = '跳到导入';
+  }
+  if (modelsPage) {
+    document.querySelector('.skip').href = '#model-provider'; document.querySelector('.skip').textContent = '跳到模型设置';
+  }
+  const title = modelsPage ? '模型渠道' : importPage ? (yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入') : searchPage ? '搜索知识' : graphPage ? '关系图谱' : attachment || current || '知识库';
+  $('breadcrumb').textContent = title; document.title = title + ' · EvoKBase';
+  if (!$('document-view').hidden) $('article').textContent = '正在读取文档…';
+  return refresh({ navigation: true });
 }
 async function get(url) {
   const response = await fetch(url, { cache: 'no-store' });
@@ -50,14 +81,20 @@ async function get(url) {
   if (!response.ok) throw Error(body.error || '读取失败');
   return body;
 }
-function tree() {
-  $('home-link').hidden = !files.includes('首页.md');
-  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !importPage && !modelsPage && !attachment && current === '首页.md' ? 'page' : 'false');
+function navigation() {
+  $('local-import-link').setAttribute('aria-current', importPage && !imaPage && !yuquePage ? 'page' : 'false');
+  $('ima-import-link').setAttribute('aria-current', imaPage ? 'page' : 'false');
+  $('yuque-import-link').setAttribute('aria-current', yuquePage ? 'page' : 'false');
+  $('home-link').setAttribute('aria-current', !graphPage && !searchPage && !importPage && !modelsPage ? 'page' : 'false');
   $('model-view').setAttribute('aria-current', modelsPage ? 'page' : 'false');
   $('import-view').setAttribute('aria-current', importPage ? 'page' : 'false');
   $('search-view').setAttribute('aria-current', searchPage ? 'page' : 'false');
   $('graph-view').setAttribute('aria-current', graphPage ? 'page' : 'false');
   $('graph-view').href = '/?view=graph' + (current ? '&doc=' + encodeURIComponent(current) : '');
+}
+function tree() {
+  $('home-link').hidden = !files.includes('首页.md');
+  navigation();
   const term = $('filter').value.trim().toLocaleLowerCase();
   const root = new Map();
   for (const file of files.filter(x => x.toLocaleLowerCase().includes(term))) {
@@ -93,29 +130,36 @@ function tree() {
   $('count').textContent = `${documents} 篇 · ${files.length - documents} 附件`;
   $('count').title = '当前配置允许展示的文档和附件';
 }
-async function refresh() {
+async function refresh({ navigation = false } = {}) {
   const run = ++revision;
   $('status').textContent = '正在读取本地文件…';
   $('metadata').hidden = true; $('link-issues').hidden = true;
   graphView.invalidate();
   try {
-    const listing = await get('/api/tree');
+    const nextListing = navigation && listing ? listing : await get('/api/tree');
     if (run !== revision) return;
+    listing = nextListing;
     files = listing.files;
     current ??= files.find(p => p === '首页.md') ?? files.find(p => /\.md$/i.test(p));
     if (graphPage && (!files.includes(current) || !/\.md$/i.test(current))) current = files.find(p => /\.md$/i.test(p));
     tree();
     if (modelsPage) {
       $('breadcrumb').textContent = '模型渠道'; document.title = '模型渠道 · EvoKBase';
-      await modelsView.refresh(); return;
+      if (!modelsView) { modelsView = initModels(); await modelsView.refresh(); }
+      else if (!navigation) await modelsView.refresh();
+      return;
     }
     if (importPage) {
       $('breadcrumb').textContent = yuquePage ? '资料导入 / 语雀' : imaPage ? '资料导入 / IMA' : '资料导入 / 本地文件'; document.title = (yuquePage ? '语雀导入' : imaPage ? 'IMA 导入' : '本地导入') + ' · EvoKBase';
-      await importsView.refresh(); return;
+      importsView ??= initImports();
+      if (navigation) await importsView.activate(yuquePage ? 'yuque' : imaPage ? 'ima' : 'local');
+      else await importsView.refresh();
+      return;
     }
     if (searchPage) {
       $('breadcrumb').textContent = '搜索知识';
       document.title = '搜索知识 · EvoKBase';
+      if (navigation && !new URL(location.href).searchParams.has('q')) return;
       await runSearch();
       return;
     }
@@ -250,8 +294,23 @@ async function runSearch() {
   } catch (error) { if (run === searchRevision) $('search-status').textContent = error.message; }
   finally { if (run === searchRevision) $('search-results').setAttribute('aria-busy', 'false'); }
 }
-$('query').value = new URL(location.href).searchParams.get('q') ?? '';
 $('search-form').addEventListener('submit', event => { event.preventDefault(); runSearch(); });
 $('filter').addEventListener('input', tree);
 $('refresh').addEventListener('click', refresh);
-refresh();
+// Keep the shell and form controllers alive; only same-tab application links use the router.
+document.addEventListener('click', event => {
+  if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  const link = event.target.closest('a[href]');
+  if (!link || link.hasAttribute('download') || (link.getAttribute('target') && link.getAttribute('target') !== '_self')) return;
+  const url = new URL(link.getAttribute('href'), location.href), previous = new URL(location.href);
+  if (url.origin !== previous.origin || url.pathname !== '/' || (url.hash && url.search === previous.search)) return;
+  if (url.searchParams.has('view') && !['search','graph','imports','ima','yuque','models'].includes(url.searchParams.get('view'))) return;
+  event.preventDefault();
+  if (url.href === previous.href) return;
+  history.pushState(null, '', url);
+  route();
+  document.querySelector('main').focus({ preventScroll: true });
+  window.scrollTo(0, 0);
+});
+window.addEventListener('popstate', () => { route(); document.querySelector('main').focus({ preventScroll: true }); });
+route();

@@ -1,144 +1,67 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
-import { plainPath, writeJSON } from './imports.mjs';
-import { failure } from './library.mjs';
-
-export const providers = [
-  {id:'deepseek',name:'DeepSeek',baseUrl:'https://api.deepseek.com',example:'deepseek-flash',docs:'https://api-docs.deepseek.com/api/create-chat-completion/'},
-  {id:'qwen',name:'阿里云百炼 · 千问',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',example:'qwen-plus',docs:'https://help.aliyun.com/zh/model-studio/first-api-call-to-qwen',hint:'按 API Key 所属地域填写地址。北京使用 https://工作空间ID.cn-beijing.maas.aliyuncs.com/compatible-mode/v1。'},
-  {id:'zhipu',name:'智谱 · GLM',baseUrl:'https://open.bigmodel.cn/api/paas/v4',example:'glm-4.7-flash',docs:'https://docs.bigmodel.cn/api-reference/模型-api/对话补全'},
-  {id:'siliconflow',name:'硅基流动',baseUrl:'https://api.siliconflow.cn/v1',example:'Qwen/Qwen2.5-7B-Instruct',docs:'https://docs.siliconflow.cn/docs/userguide/guides/fine-tune'},
-];
-const providerFor = id => providers.find(item => item.id === id);
-const within = (child, parent) => { const rel=path.relative(parent,child); return !rel || (!rel.startsWith('..'+path.sep) && rel!=='..' && !path.isAbsolute(rel)); };
-const invalid = () => failure(400,'模型渠道配置无效，请核对供应商、官方地址、模型名和 API Key');
-
-function validate(entry, id) {
-  const provider=providerFor(id);
-  if (!provider || !entry || typeof entry.baseUrl!=='string' || typeof entry.model!=='string' || !/^[\w./:-]{1,200}$/.test(entry.model) || typeof entry.apiKey!=='string' || !/^[\x21-\x7e]{1,4096}$/.test(entry.apiKey)) throw invalid();
-  // Bind credentials to a known provider endpoint; never follow an arbitrary URL or redirect.
-  const allowed=entry.baseUrl===provider.baseUrl || (id==='qwen' && /^https:\/\/[a-z0-9-]+\.cn-beijing\.maas\.aliyuncs\.com\/compatible-mode\/v1$/.test(entry.baseUrl));
-  if (!allowed) throw invalid();
-  return {baseUrl:entry.baseUrl,model:entry.model,apiKey:entry.apiKey};
-}
+import {fileURLToPath} from 'node:url';
+import {randomUUID} from 'node:crypto';
+import {plainPath,writeJSON,digest} from './imports.mjs';
+import {failure} from './library.mjs';
+import {providers,discover,runHarness} from './harness.mjs';
 
 export function createModels(config) {
-  const filename=config.models?.file;
+  const settings=config.harnesses, filename=settings?.file;
   let busy=false;
-  async function checkPath(create=false) {
-    const app=fileURLToPath(new URL('../',import.meta.url));
-    const roots=await Promise.all([config.root,app,config.imports?.directory].filter(Boolean).map(async root=>{
-      try { return await fs.realpath(root); } catch(error) { if(error.code==='ENOENT') return path.resolve(root); throw error; }
-    }));
-    if (!path.isAbsolute(filename??'') || path.extname(filename)!=='.json' || roots.some(root=>within(path.resolve(filename),root))) throw failure(503,'模型配置文件须位于知识库、暂存区和应用仓库之外');
-    await plainPath(path.dirname(filename),create); await plainPath(filename);
-    if(create) await plainPath(filename+'.lock');
-  }
-  async function load() {
-    await checkPath();
+  async function load(create=false) {
+    const roots=[config.root,config.imports?.directory,fileURLToPath(new URL('../',import.meta.url))].filter(Boolean);
+    if(!path.isAbsolute(filename??'') || path.extname(filename)!=='.json' || roots.some(root=>{const rel=path.relative(root,filename);return !rel || (!rel.startsWith('..'+path.sep) && rel!=='..' && !path.isAbsolute(rel));})) throw failure(503,'Harness 配置文件须位于知识库、暂存区和应用仓库之外');
+    await plainPath(path.dirname(filename),create);await plainPath(filename);
     try {
-      if ((await fs.stat(filename)).size>64*1024) throw Error();
+      if((await fs.stat(filename)).size>16384) throw Error();
       const data=JSON.parse(await fs.readFile(filename,'utf8'));
-      if(data.schemaVersion!==1 || typeof data.version!=='string' || !data.providers || Array.isArray(data.providers) || typeof data.providers!=='object' || (data.selected!==null && !providerFor(data.selected))) throw Error();
-      const entries=Object.fromEntries(Object.entries(data.providers).map(([id,entry])=>[id,validate(entry,id)]));
-      return {schemaVersion:1,version:data.version,selected:data.selected,providers:entries};
+      if(data.schemaVersion!==1 || typeof data.version!=='string' || (data.selected!==null && !providers.some(p=>p.id===data.selected)) || Object.keys(data).some(key=>!['schemaVersion','version','selected'].includes(key))) throw Error();
+      return data;
     } catch(error) {
-      if(error.code==='ENOENT') return {schemaVersion:1,version:'new',selected:null,providers:{}};
-      throw failure(503,'模型配置文件不可读或格式无效；未覆盖现有配置');
+      if(error.code==='ENOENT') return {schemaVersion:1,version:'new',selected:null};
+      throw failure(503,'Harness 配置不可读，未覆盖现有文件');
     }
   }
-  function publicState(data) {
-    return {enabled:true,version:data.version,selected:data.selected,providers:providers.map(provider=>({...provider,model:data.providers[provider.id]?.model??'',baseUrl:data.providers[provider.id]?.baseUrl??provider.baseUrl,hasKey:Boolean(data.providers[provider.id])}))};
+  async function snapshot(create=false) {
+    const data=await load(create), runtimes=await Promise.all(providers.map(p=>discover(p,settings.commands?.[p.id])));
+    const version=digest(JSON.stringify([data.version,...runtimes.map(p=>p.runtimeId??null)]));
+    return {data,runtimes,visible:{enabled:true,version,selected:data.selected,providers:runtimes.map(({launch,...p})=>p)}};
   }
-  async function state() { return filename ? publicState(await load()) : {enabled:false,providers}; }
+  async function state() {return filename?(await snapshot()).visible:{enabled:false,providers};}
   async function save(input) {
-    if (busy) throw failure(409,'模型请求正在进行，请先取消或等待完成');
-    await checkPath(true);
+    if(busy) throw failure(409,'Harness 正在运行，请完成或取消后切换');
+    if(input.action!=='save' || !providers.some(p=>p.id===input.provider) || Object.keys(input).some(key=>!['action','version','provider'].includes(key))) throw failure(400,'请选择本地 Harness；API 配置已停用');
+    await load(true);await plainPath(filename+'.lock');
     let lock;
-    try { lock=await fs.open(filename+'.lock','wx',0o600); }
-    catch(error) { if(error.code==='EEXIST') throw failure(409,'另一个模型配置保存正在进行，请稍后重试'); throw error; }
+    try {lock=await fs.open(filename+'.lock','wx',0o600);} catch(error) {if(error.code==='EEXIST')throw failure(409,'另一个配置保存正在进行');throw error;}
     try {
-      const data=await load();
-      if(input.version!==data.version) throw failure(409,'模型配置已变化，请刷新后重新编辑');
-      if(!providerFor(input.provider)) throw invalid();
-      if(input.action==='remove') {
-        delete data.providers[input.provider];
-        if(data.selected===input.provider) data.selected=null;
-      } else if(input.action==='save') {
-        const previous=data.providers[input.provider];
-        const baseUrl=typeof input.baseUrl==='string'?input.baseUrl.trim().replace(/\/$/,''):'';
-        if(typeof input.apiKey!=='string') throw invalid();
-        // Empty means retain only this provider's key at the same destination, never another channel's key.
-        const apiKey=input.apiKey.trim() || (previous?.baseUrl===baseUrl?previous.apiKey:'');
-        data.providers[input.provider]=validate({baseUrl,model:typeof input.model==='string'?input.model.trim():'',apiKey},input.provider);
-        data.selected=input.provider;
-      } else throw invalid();
-      data.version=randomUUID();
-      await writeJSON(filename,data);
-      return publicState(data);
-    } finally { await lock.close(); await fs.unlink(filename+'.lock'); }
+      const {data,visible,runtimes}=await snapshot();
+      if(input.version!==visible.version) throw failure(409,'配置或本地程序已变化，请刷新后重试');
+      const runtime=runtimes.find(p=>p.id===input.provider);
+      if(!runtime.available) throw failure(409,runtime.message);
+      data.selected=input.provider;data.version=randomUUID();await writeJSON(filename,data);
+      return (await snapshot()).visible;
+    } finally {await lock.close();await fs.unlink(filename+'.lock');}
   }
-  async function test(input, signal) {
-    if (busy) throw failure(409,'已有连接测试正在进行');
+  async function generate(input,messages,signal) {
+    if(busy) throw failure(409,'已有 Harness 请求正在进行');
     busy=true;
     try {
-      const data=await load();
-      if(input.version!==data.version) throw failure(409,'模型配置已变化，请刷新后重新测试');
-      if(!providerFor(input.provider) || !data.providers[input.provider]) throw failure(400,'请先保存此供应商的模型和 API Key');
-      return await probeModel(data.providers[input.provider],signal);
-    }
-    finally { busy=false; }
+      const {visible,runtimes}=await snapshot();
+      if(input.version!==visible.version || input.provider!==visible.selected) throw failure(409,'Harness 配置已变化，请重新确认');
+      const runtime=runtimes.find(p=>p.id===input.provider);
+      if(!runtime?.available) throw failure(409,runtime?.message||'请先选择本地 Harness');
+      const result=await runHarness(runtime,messages,settings,signal);
+      if((await snapshot()).visible.version!==visible.version) throw failure(409,'运行期间 Harness 配置发生变化，结果未采用');
+      return result;
+    } finally {busy=false;}
   }
-  async function generate(input, messages, signal) {
-    if (busy) throw failure(409,'已有模型请求正在进行，请稍后重试');
-    busy=true;
-    try {
-      const data=await load(), entry=data.providers[input.provider];
-      if(input.version!==data.version || input.provider!==data.selected) throw failure(409,'模型配置已变化，请重新确认接收资料的渠道');
-      if(!entry) throw failure(409,'请先配置模型渠道');
-      // Flash defaults to high-effort thinking; use low effort with room for reasoning and final candidate JSON.
-      const options=input.provider==='deepseek' && entry.model==='deepseek-flash'?{thinking:{type:'enabled'},reasoning_effort:'low'}:{};
-      const result=await requestModel(entry,messages,16384,signal,90000,options);
-      if(result.finishReason==='length') throw failure(502,'模型输出达到长度上限，候选未采用；请缩短资料后重试');
-      if(typeof result.message.content!=='string' || !result.message.content.trim()) throw failure(502,'模型未返回最终正文，候选未采用；请核对模型模式后重试');
-      if(result.message.content.includes(entry.apiKey)) throw failure(502,'模型响应包含敏感配置，已丢弃');
-      if((await load()).version!==data.version) throw failure(409,'处理期间模型配置已变化，结果未采用');
-      return result.message.content;
-    } finally { busy=false; }
+  async function test(input,signal) {
+    const start=Date.now();
+    const text=await generate(input,[{role:'user',content:'这是一项连接测试。不要调用任何工具，只回复 OK。'}],signal);
+    if(text.trim()!=='OK') throw failure(502,'Harness 已返回，但未通过固定文字测试，请核对本地配置');
+    return {status:'connected',elapsedMs:Date.now()-start};
   }
   return {state,save,test,generate};
-}
-
-export async function probeModel(entry, signal, timeoutMs=30000) {
-  const start=Date.now();
-  await requestModel(entry,[{role:'user',content:'连接测试：请只回复 OK。'}],64,signal,timeoutMs);
-  return {status:'connected',elapsedMs:Date.now()-start};
-}
-
-async function requestModel(entry, messages, maxTokens, signal, timeoutMs, options={}) {
-  const deadline=AbortSignal.timeout(timeoutMs), combined=signal?AbortSignal.any([signal,deadline]):deadline;
-  try {
-    const response=await fetch(entry.baseUrl+'/chat/completions',{method:'POST',redirect:'error',signal:combined,
-      headers:{'Content-Type':'application/json',Authorization:'Bearer '+entry.apiKey},
-      body:JSON.stringify({model:entry.model,messages,stream:false,max_tokens:maxTokens,...options})});
-    if(!response.ok) {
-      await response.body?.cancel();
-      const errors={401:'API Key 无效',403:'API Key 或模型访问权限不足',404:'接口或模型不存在',429:'请求限流或额度不足'};
-      throw failure(502,errors[response.status]??'供应商返回错误，请核对模型和服务状态');
-    }
-    let size=0; const chunks=[];
-    for await(const chunk of response.body) { size+=chunk.length; if(size>256*1024) throw failure(502,'模型响应超过测试限制'); chunks.push(chunk); }
-    const result=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    const message=result.choices?.[0]?.message;
-    if(result.error || !message || ![message.content,message.reasoning_content].some(text=>typeof text==='string' && text.trim())) throw failure(502,'供应商未返回有效文本，请核对模型是否支持对话接口');
-    // The probe discards provider text; document processing validates it before exposing candidates.
-    return {message,finishReason:result.choices[0].finish_reason};
-  } catch(error) {
-    if(signal?.aborted) throw failure(499,'连接测试已取消');
-    if(deadline.aborted) throw failure(504,'连接测试超时，请稍后重试');
-    if(error.status) throw error;
-    throw failure(502,'模型连接失败或响应无效，请核对网络和供应商状态');
-  }
 }

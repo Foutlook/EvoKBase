@@ -112,6 +112,14 @@ test('页面从整理中转为可编辑要点，修改不被刷新覆盖，确�
   await poll(); assert.equal(node('review-candidates').children.length,1,'同一run完成后必须绘制要点');
   node('point-title-0').value='用户修改'; node('point-title-0').events.input();
   const count=requests.length; await context.page.refresh(); assert.equal(requests.length,count); assert.equal(node('point-title-0').value,'用户修改');
+  node('import-title').value='还未上传的标题';
+  const candidate=node('point-title-0'), readCount=requests.filter(item=>item.url==='/api/imports/id1').length;
+  await context.page.activate('ima'); await context.page.activate('yuque'); await context.page.activate('local');
+  assert.equal(node('point-title-0'),candidate); assert.equal(candidate.value,'用户修改');
+  assert.equal(node('import-title').value,'还未上传的标题');
+  assert.equal(requests.filter(item=>item.url==='/api/imports/id1').length,readCount,'切换来源不重载或覆盖审核草稿');
+  assert.equal(node('import-form').hidden,false);
+  assert.equal(requests.filter(item=>item.body).length,0,'导航不触发保存或处理');
   await node('review-prepare').events.click();
   const prepared=requests.find(item=>item.body?.action==='prepare'); assert.equal(prepared.body.selections[0].title,'用户修改');
   assert.equal(node('review-confirmation').hidden,false); assert.equal(node('review-editor').hidden,true);

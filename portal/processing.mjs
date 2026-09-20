@@ -64,7 +64,7 @@ export function createProcessing(imports,models,search,library) {
     if(active.has(id)) return state(id);
     if(active.size>=20) throw failure(409,'待处理资料过多，请稍后重试');
     const modelState=await models.state(), provider=modelState.providers.find(item=>item.id===input.provider);
-    if(!modelState.enabled || modelState.version!==input.modelVersion || modelState.selected!==input.provider || !provider?.hasKey) throw failure(409,'模型配置已变化或尚未配置，请重新确认');
+    if(!modelState.enabled || modelState.version!==input.modelVersion || modelState.selected!==input.provider || !provider?.available) throw failure(409,'Harness 已变化、未选择或未安装，请重新确认');
     // Recheck after I/O: two requests must not enqueue the same job twice.
     if(active.has(id)) return state(id);
     const previous=await read(id);

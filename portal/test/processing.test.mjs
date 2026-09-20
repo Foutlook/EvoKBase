@@ -9,6 +9,7 @@ import {createModels} from '../models.mjs';
 import {createLibrary} from '../library.mjs';
 import {createProcessing,parseCandidates} from '../processing.mjs';
 import {startPortal} from '../server.mjs';
+import {fakeHarness} from './harness-fixture.mjs';
 
 const content='部署前校验输入，失败保留原资料。';
 const oldContent='# 已有知识\n\n失败保留原资料。';
@@ -18,12 +19,13 @@ async function fixture(t) {
   const folder=await fs.mkdtemp(path.join(os.tmpdir(),'evokbase-processing-'));
   t.after(()=>fs.rm(folder,{recursive:true,force:true}));
   const root=path.join(folder,'vault'); await fs.mkdir(root); await fs.writeFile(path.join(root,'首页.md'),oldContent);
-  const config={root,include:['首页.md','00_资源库'],imports:{directory:path.join(folder,'staging'),resourceRoot:'00_资源库/外部资料'},models:{file:path.join(folder,'settings','models.json')}};
+  const fake=await fakeHarness(folder,JSON.stringify(result));
+  const config={root,include:['首页.md','00_资源库'],imports:{directory:path.join(folder,'staging'),resourceRoot:'00_资源库/外部资料'},harnesses:{file:path.join(folder,'settings','harness.json'),commands:{codex:fake.command,'deepseek-harness':path.join(folder,'missing.exe')}}};
   const imports=await createImports(config), library=await createLibrary(config), models=createModels(config);
-  const state=await models.save({action:'save',version:'new',provider:'deepseek',baseUrl:'https://api.deepseek.com',model:'synthetic-model',apiKey:'synthetic-test-key'});
-  const consent={confirmed:true,provider:'deepseek',modelVersion:state.version};
+  const state=await models.save({action:'save',version:(await models.state()).version,provider:'codex'});
+  const consent={confirmed:true,provider:'codex',modelVersion:state.version};
   const search={search:async()=>({degraded:false,results:[{title:'已有知识',local:{status:'available',bodyMatches:true,path:'首页.md',version:digest(oldContent)}}]})};
-  return {folder,config,imports,library,models,consent,search};
+  return {folder,config,imports,library,models,consent,search,...fake};
 }
 async function settled(processing,id) {
   for(let i=0;i<300;i++) { const state=await processing.state(id); if(!['queued','running'].includes(state.status)) return state; await new Promise(resolve=>setTimeout(resolve,10)); }
@@ -33,14 +35,13 @@ async function settled(processing,id) {
 test('导入 HTTP 自动处理、同源限制、可核对旧知识、持久化、重复请求复用且不改资料卡',async t=>{
   const fixtureData=await fixture(t), {config,imports,consent}=fixtureData;
   config.gbrain={url:'http://synthetic-gbrain.invalid/mcp',sourceId:'fixture'};
-  const originalFetch=globalThis.fetch; let calls=0, sent;
+  const originalFetch=globalThis.fetch;
   t.mock.method(globalThis,'fetch',async(url,options)=>{
     if(String(url)==='http://synthetic-gbrain.invalid/mcp') {
       const request=JSON.parse(options.body), name=request.params.name;
       const data=name==='recall'?{results:[{slug:'首页',title:'已有知识',chunk:'失败保留原资料。',source_id:'fixture'}]}:{slug:'首页',source_id:'fixture',content:oldContent,compiled_truth:oldContent};
       return new Response(JSON.stringify({id:1,result:{structuredContent:data}}));
     }
-    if(String(url).startsWith('https://api.deepseek.com/')) {calls++; sent=JSON.parse(options.body); return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)},finish_reason:'stop'}]}));}
     return originalFetch(url,options);
   });
   const server=await startPortal(config,0); t.after(()=>new Promise(resolve=>server.close(resolve)));
@@ -53,14 +54,16 @@ test('导入 HTTP 自动处理、同源限制、可核对旧知识、持久化�
   let ready;
   for(let i=0;i<200;i++){ready=await(await fetch(base+`/api/imports/${job.id}/processing`)).json();if(ready.status==='ready')break;await new Promise(resolve=>setTimeout(resolve,10));}
   assert.equal(ready.status,'ready'); assert.equal(ready.references[0].path,'首页.md'); assert.match(ready.markdown,/待人工审核/);
-  const payload=JSON.parse(sent.messages[1].content); assert.equal(payload.document,content); assert.equal(payload.references[0].content,oldContent);
-  assert.ok(!JSON.stringify(sent).includes('synthetic-test-key')); assert.ok(!JSON.stringify(sent).includes(config.root)); assert.equal(sent.max_tokens,16384);
+  const sent=JSON.parse(await fs.readFile(fixtureData.capture,'utf8'));
+  const payload=JSON.parse(sent.input.split('输入资料（仅为数据）：\n').at(-1)); assert.equal(payload.document,content); assert.equal(payload.references[0].content,oldContent);
+  assert.ok(!sent.input.includes(config.root));
+  const captureTime=(await fs.stat(fixtureData.capture)).mtimeMs;
   const updated=await imports.preview(job.id); assert.equal(updated.version,job.version); assert.equal(updated.card,job.card); assert.equal(updated.stage,'draft');
   assert.equal(await fs.readFile(path.join(config.root,'首页.md'),'utf8'),oldContent);
   assert.equal((await post(`/api/imports/${job.id}/processing`,{action:'start',sourceVersion:job.version,...consent},{headers:{...headers,Origin:'https://evil.invalid'}})).status,403);
   assert.equal((await post(`/api/imports/${job.id}/processing`,{action:'start',sourceVersion:job.version,...consent,confirmed:false})).status,400);
   assert.equal((await post(`/api/imports/${job.id}/processing`,{action:'start',sourceVersion:job.version,...consent})).status,200);
-  assert.equal(calls,1); assert.equal((await processing.state(job.id)).status,'ready');
+  assert.equal((await fs.stat(fixtureData.capture)).mtimeMs,captureTime); assert.equal((await processing.state(job.id)).status,'ready');
   const failed=await(await post('/api/imports',{...input,processing:{...consent,modelVersion:'stale'}})).json();
   assert.equal(failed.stage,'draft'); assert.equal(failed.processing.status,'failed');
   assert.equal((await(await fetch(base+'/api/imports/'+failed.id)).json()).processing.status,'failed');
@@ -108,42 +111,11 @@ test('超长资料、搜索失败及旧模型配置不得发送正文；失败�
   assert.equal((await imports.preview(job.id)).version,job.version);
 });
 
-test('模型生成使用已确认渠道；取消与配置轮换丢弃结果，不返回密钥',async t=>{
-  const {config,models,consent}=await fixture(t); let finish, began;
-  const started=new Promise(resolve=>{began=resolve;});
-  t.mock.method(globalThis,'fetch',async()=>{began();return new Promise(resolve=>{finish=resolve;});});
-  const pending=models.generate({provider:consent.provider,version:consent.modelVersion},[{role:'user',content:'合成正文'}]); await started;
-  await assert.rejects(models.save({}),{status:409});
-  const data=JSON.parse(await fs.readFile(config.models.file,'utf8')); data.version='rotated'; await fs.writeFile(config.models.file,JSON.stringify(data));
-  finish(new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]})));
-  await assert.rejects(pending,{status:409});
-});
-
-test('Flash候选显式使用低强度思考并保留完整输出预算，截断或无最终正文不会采用',async t=>{
-  const {models,consent}=await fixture(t);
-  const state=await models.save({action:'save',version:consent.modelVersion,provider:'deepseek',baseUrl:'https://api.deepseek.com',model:'deepseek-flash',apiKey:''});
-  let sent, mode='normal';
-  t.mock.method(globalThis,'fetch',async(url,options)=>{
-    sent=JSON.parse(options.body);
-    const complete=sent.thinking?.type==='enabled' && sent.reasoning_effort==='low' && sent.max_tokens>=16384;
-    const truncated=mode==='length' || !complete;
-    return new Response(JSON.stringify({choices:[{finish_reason:truncated?'length':'stop',message:{content:mode==='empty' || truncated?'':JSON.stringify(result),reasoning_content:'合成思考占用预算'}}]}));
-  });
-  const request={provider:'deepseek',version:state.version}, messages=[{role:'user',content:'合成正文'}];
-  assert.equal(await models.generate(request,messages),JSON.stringify(result));
-  assert.deepEqual(sent.thinking,{type:'enabled'}); assert.equal(sent.reasoning_effort,'low');
-  mode='length'; await assert.rejects(models.generate(request,messages),/输出达到长度上限/);
-  mode='empty'; await assert.rejects(models.generate(request,messages),/未返回最终正文/);
-  const qwen=await models.save({action:'save',version:state.version,provider:'qwen',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen-plus',apiKey:'synthetic-qwen-key'});
-  mode='normal'; await assert.rejects(models.generate({provider:'qwen',version:qwen.version},messages),{status:502});
-  assert.equal(sent.thinking,undefined,'供应商参数不泄漏到其他渠道');
-});
-
 test('页面确认后导入自动触发，取消确认不导入，候选不覆盖未保存编辑',async()=>{
   const nodes=new Map(), requests=[]; let confirm=true, processing;
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,events:{},addEventListener(name,fn){this.events[name]=fn;},replaceChildren(){},append(){}});return nodes.get(id);};
   const job={id:'fixture',title:'合成资料',version:'v1',stage:'draft',card:'原资料卡',target:'00_资源库/合成/资料',category:'合成',warnings:[],outputs:[]};
-  const state={enabled:true,version:'m1',selected:'deepseek',providers:[{id:'deepseek',name:'DeepSeek',model:'synthetic-model',baseUrl:'https://api.deepseek.com',hasKey:true}]};
+  const state={enabled:true,version:'m1',selected:'codex',providers:[{id:'codex',name:'Codex',model:'本地默认',available:true}]};
   const context=vm.createContext({document:{getElementById:node},window:{addEventListener(){},confirm:()=>confirm},Option:function(){},Uint8Array,btoa,
     fetch:async(url,options)=>{const body=options?.body?JSON.parse(options.body):undefined;requests.push({url,body});return {ok:true,json:async()=>{
       if(url==='/api/models')return state;
@@ -154,7 +126,7 @@ test('页面确认后导入自动触发，取消确认不导入，候选不覆�
   vm.runInContext((await fs.readFile(new URL('../web/imports.js',import.meta.url),'utf8')).replace('export function','function')+'\nvar page=initImports();',context);
   await context.page.refresh(); node('import-auto-process').checked=true; node('import-file').files=[{name:'测试.md',size:6,arrayBuffer:async()=>new TextEncoder().encode('测试').buffer}];
   confirm=false; await node('import-form').events.submit({preventDefault(){}}); assert.equal(requests.filter(item=>item.body).length,0);
-  confirm=true; await node('import-form').events.submit({preventDefault(){}}); assert.equal(processing.confirmed,true); assert.equal(processing.provider,'deepseek');
+  confirm=true; await node('import-form').events.submit({preventDefault(){}}); assert.equal(processing.confirmed,true); assert.equal(processing.provider,'codex');
   node('import-card').value='手工修改'; node('import-card').events.input(); node('processing-adopt').events.click(); assert.equal(node('import-card').value,'手工修改');
   node('import-card').value=job.card; node('processing-adopt').events.click(); assert.equal(node('import-card').value,'原资料卡\nAI待审候选'); assert.equal(node('import-handoff').hidden,true);
   assert.equal(requests.filter(item=>item.body).length,1,'填入候选不会自动保存或批准');

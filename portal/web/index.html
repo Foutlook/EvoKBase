@@ -11,14 +11,25 @@
 <body>
   <a class="skip" href="#article">跳到正文</a>
   <nav class="primary-nav" aria-label="功能导航">
-    <a id="home-link" href="/?doc=%E9%A6%96%E9%A1%B5.md" aria-label="首页" title="首页" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/></svg></a>
-    <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg></a>
-    <a id="search-view" href="/?view=search" aria-label="搜索知识" title="搜索知识"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></a>
-    <a id="import-view" href="/?view=imports" aria-label="导入资料" title="导入资料"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-7 5-5 5 5M4 15v6h16v-6"/></svg></a>
-    <a id="model-view" href="/?view=models" aria-label="模型渠道" title="模型渠道"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg></a>
+    <a class="app-brand" href="/"><b class="brand-monogram" aria-hidden="true">E</b><span>EvoKBase<small>知识工作台</small></span></a>
+    <div class="nav-section"><p class="nav-label">知识空间</p>
+      <a id="home-link" href="/?doc=%E9%A6%96%E9%A1%B5.md" aria-label="知识库" title="知识库" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/></svg><span>知识库</span></a>
+      <a id="search-view" href="/?view=search" aria-label="搜索知识" title="搜索知识"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><span>搜索知识</span></a>
+      <a id="graph-view" href="/?view=graph" aria-label="关系图谱" title="关系图谱"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="12" cy="19" r="3"/><path d="m6.5 8 4 8m7-8-4 8M8 5h8"/></svg><span>关系图谱</span></a>
+    </div>
+    <div class="nav-section"><p class="nav-label">收集与整理</p>
+      <a id="import-view" href="/?view=imports" aria-label="导入资料" title="导入资料"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-7 5-5 5 5M4 15v6h16v-6"/></svg><span>资料导入</span></a>
+      <div id="import-navigation" class="import-navigation" aria-label="资料导入导航">
+        <a id="local-import-link" href="/?view=imports"><span>本地文件</span><small>MD / Word / PDF</small></a>
+        <a id="ima-import-link" href="/?view=ima"><span>IMA</span><small>知识库与笔记</small></a>
+        <a id="yuque-import-link" href="/?view=yuque"><span>语雀</span><small>在线文档</small></a>
+      </div>
+    </div>
+    <div class="nav-section nav-settings"><p class="nav-label">工作台设置</p><a id="model-view" href="/?view=models" aria-label="模型渠道" title="模型渠道"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg><span>模型渠道</span></a></div>
+    <div class="workspace-note"><span class="dot"></span> 本地工作空间<small>内容由你掌控，知识持续积累。</small></div>
   </nav>
-  <aside class="sidebar" aria-label="知识目录">
-    <a class="brand" href="/"><span>EvoKBase<small>知识目录</small></span></a>
+  <aside id="directory-panel" class="sidebar" aria-label="知识目录">
+    <div class="directory-heading"><strong>知识目录</strong><button id="directory-close" type="button" class="quiet" aria-label="关闭知识目录">关闭</button></div>
     <div class="library-label">文件 <span id="count">—</span></div>
     <label for="filter">筛选文件</label>
     <input id="filter" type="search" placeholder="输入文件名或路径…" autocomplete="off" aria-describedby="filter-hint">
@@ -26,37 +37,29 @@
     <nav id="tree" aria-label="目录树"></nav>
     <div class="sidebar-foot"><span class="dot"></span> 本机 · 只读浏览<small>在原文件中编辑，回到这里刷新。</small></div>
   </aside>
-  <aside id="import-navigation" class="import-navigation" hidden aria-label="资料导入导航">
-    <a class="brand" href="/">EvoKBase</a>
-    <p class="import-nav-label">资料导入</p>
-    <nav aria-label="导入方式">
-      <a id="local-import-link" href="/?view=imports"><span>本地导入</span><small>上传电脑中的文件</small></a>
-      <a id="ima-import-link" href="/?view=ima"><span>IMA 导入</span><small>个人知识库与笔记</small></a>
-      <a id="yuque-import-link" href="/?view=yuque"><span>语雀导入</span><small>通过文档链接读取</small></a>
-    </nav>
-    <p class="import-nav-note">从资料到知识<br><span>保留原件 · 核对来源 · 审核归档</span></p>
-  </aside>
-  <main>
-    <header class="toolbar"><span id="breadcrumb">你的知识，随手可读</span><button id="refresh" type="button">↻ 刷新</button></header>
+
+  <main tabindex="-1">
+    <header class="toolbar"><div class="toolbar-location"><button id="directory-toggle" type="button" class="secondary" aria-controls="directory-panel" aria-expanded="true">目录</button><span id="breadcrumb">知识工作台</span></div><div class="toolbar-actions"><span class="local-badge"><i></i> 本地空间</span><button id="refresh" type="button" class="secondary">刷新</button></div></header>
     <section class="reading">
-      <div class="eyebrow">THE KNOWLEDGE LIBRARY <span>本地文件</span></div>
+      <div class="eyebrow">知识库 <span>本地文档</span></div>
       <p id="status" role="status" aria-live="polite">正在读取目录…</p>
       <section id="search-panel" hidden aria-label="搜索知识">
-        <h1>搜索知识</h1>
+        <p class="page-kicker">KNOWLEDGE SEARCH</p><h1>让已有知识，再次派上用场。</h1>
         <p class="search-hint">搜索已发布到 GBrain 的内容。本地刚保存的修改，需按原有流程发布后才能搜到。</p>
         <form id="search-form" role="search"><label for="query">关键词或问题</label><div class="search-input"><input id="query" type="search" maxlength="500" required placeholder="从已有知识中找答案…" autocomplete="off"><button type="submit">搜索</button></div></form>
         <p id="search-status" role="status" aria-live="polite">输入内容后搜索。</p>
         <div id="search-results"></div>
       </section>
       <section id="import-panel" hidden aria-label="导入资料">
-        <header class="import-heading"><p class="import-kicker">收集，让知识有迹可循</p><h1 id="import-heading">本地导入</h1><p id="import-intro">上传文件，保留原件，再核对内容与来源。</p></header>
+        <header class="import-heading"><p class="import-kicker">COLLECT & ORGANIZE</p><h1 id="import-heading">本地导入</h1><p id="import-intro">上传文件，保留原件，再核对内容与来源。</p></header>
         <p id="import-status" role="status" aria-live="polite">正在读取导入配置…</p>
-        <details id="import-intake" open><summary>① 添加一篇新资料</summary>
+        <details id="import-intake" open><summary><span>添加新资料</span><small>导入 → 整理 → 审核保存</small></summary>
         <section class="import-processing-choice" aria-label="导入后处理">
           <label><input id="import-auto-process" type="checkbox" checked> 帮我整理值得记住的内容</label>
           <p id="import-model-status" class="search-hint">正在读取模型渠道…</p>
           <p class="search-hint">AI 会阅读本篇资料，对照最多 3 份已有知识。导入时确认发送范围；整理完成后，由你选择保存哪些内容。</p>
         </section>
+
         <section id="ima-panel" class="ima-panel" hidden aria-label="IMA 资料">
           <form id="ima-form" hidden><fieldset id="ima-fields">
             <div class="ima-source-bar">
@@ -98,14 +101,15 @@
           <details class="import-help"><summary>会保留哪些内容？</summary><p class="search-hint">保留官方 API 返回的 Markdown 正文快照、文档标识、来源链接、获取时间及可获得的更新时间。图片、附件、评论、历史版本和外部链接不下载；富文本转换可能损失排版，请对照语雀原文审核。需要完整附件时，请从语雀导出后使用本地导入。</p></details>
         </section>
         <form id="import-form" hidden>
-          <div class="local-file-box"><span class="file-symbol" aria-hidden="true">↥</span><label for="import-file">选择一份资料</label><p>Markdown · Word · PDF</p><input id="import-file" type="file" accept=".md,.docx,.pdf" required aria-describedby="import-file-hint"><small id="import-file-hint">Markdown ≤ 4 MiB · DOCX / PDF ≤ 16 MiB · 扫描 PDF 暂不识别</small></div>
+          <div class="local-file-box"><span class="file-symbol" aria-hidden="true">FILE</span><label for="import-file">选择一份资料</label><p>Markdown · Word · PDF</p><input id="import-file" type="file" accept=".md,.docx,.pdf" required aria-describedby="import-file-hint"><small id="import-file-hint">Markdown ≤ 4 MiB · DOCX / PDF ≤ 16 MiB · 扫描 PDF 暂不识别</small></div>
           <div class="import-form-grid"><div><label for="import-title">资料标题 <span>可选</span></label><input id="import-title" maxlength="150" placeholder="默认使用文件名"></div><div><label for="import-new-category">存入主题分类</label><input id="import-new-category" list="import-categories" maxlength="160" required placeholder="选择或输入分类"></div></div>
           <label for="import-source">来源链接或说明 <span>可选</span></label><input id="import-source" maxlength="500" placeholder="保留原始文章链接或出处，方便日后追溯">
           <div class="local-submit"><span>先看整理结果，确认后才存入知识库。</span><button id="import-upload" type="submit">导入资料 →</button></div>
         </form>
+
         </details>
         <datalist id="import-categories"></datalist>
-        <div class="import-resume"><div><h2>我的导入资料</h2><p>选择一篇资料，继续查看或保存。</p></div><div><label class="visually-hidden" for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select></div></div>
+        <div class="import-resume"><div><h2>继续整理</h2><p>打开已导入的资料，查看进度并审核内容。</p></div><div><label class="visually-hidden" for="import-jobs">继续已有任务</label><select id="import-jobs"><option value="">选择已有导入任务</option></select></div></div>
         <section id="import-draft" hidden>
           <h2 id="import-task-title"></h2><p id="import-version" class="search-version"></p>
           <ol class="review-steps" aria-label="保存步骤"><li>① 导入资料</li><li>② 选择要点</li><li>③ 确认保存</li></ol>
@@ -136,19 +140,14 @@
         </section>
       </section>
       <section id="model-panel" hidden aria-label="模型渠道">
-        <p class="model-kicker">连接你的模型</p><h1>模型渠道</h1>
-        <p class="search-hint">选择供应商，使用自己的 API Key。每个供应商的配置独立保存。</p>
+        <p class="model-kicker">AI WORKSPACE</p><h1>选择你的 AI 助手</h1>
+        <p class="search-hint">导入资料后，调用本机 AI 助手整理。这里选择工具，登录在对应工具中完成。</p>
         <p id="model-status" role="status" aria-live="polite">正在读取模型设置…</p>
         <form id="model-form" hidden autocomplete="off">
-          <label for="model-provider">供应商</label><select id="model-provider"></select>
-          <div class="model-doc-line"><span id="model-hint"></span> <a id="model-docs" target="_blank" rel="noopener noreferrer">官方文档 ↗</a></div>
-          <label for="model-name">模型名称</label><input id="model-name" required maxlength="200" spellcheck="false" autocomplete="off">
-          <label for="model-base-url">API 地址</label><input id="model-base-url" type="url" required maxlength="500" spellcheck="false">
-          <label for="model-key">API Key</label><input id="model-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" aria-describedby="model-key-status model-storage-note">
-          <p id="model-key-status" class="search-hint"></p>
-          <p id="model-storage-note" class="search-hint">密钥保存在本机独立配置文件中（明文），请勿分享此文件；保存后不会回传页面。</p>
-          <div class="model-actions"><button id="model-save" type="submit">保存配置</button><button id="model-test" type="button" class="secondary" disabled>测试连接</button><button id="model-cancel" type="button" class="secondary" hidden>取消测试</button><button id="model-remove" type="button" class="quiet" disabled>清除此渠道</button></div>
-          <p class="model-test-note">测试仅向所选供应商发送“连接测试：请只回复 OK。”，可能产生少量 API 费用；不读取或发送知识库资料。当前先验证连接，资料处理按原流程进行。</p>
+          <div class="form-section-heading"><span class="section-index">01</span><div><h2>本地执行工具</h2><p>复用已安装的 Codex 或 DeepSeek Harness。</p></div></div><label for="model-provider">选择本地工具</label><select id="model-provider"></select>
+          <div class="harness-install"><strong id="model-install-status"></strong><p id="model-hint"></p><p id="model-executable" class="model-doc-line"></p></div>
+          <div class="model-actions"><button id="model-save" type="submit">使用此 Harness</button><button id="model-test" type="button" class="secondary" disabled>测试运行</button><button id="model-cancel" type="button" class="secondary" hidden>取消测试</button><button id="model-refresh" type="button" class="quiet">重新检测</button></div>
+          <p class="model-test-note">未安装会直接提示，不自动下载。测试只发送固定文字，不读取知识库；本地 Harness 仍可能连接云端模型并产生用量。API 渠道已停用。</p>
         </form>
       </section>
       <div id="document-view">
@@ -192,7 +191,7 @@
         <details id="graph-unresolved" hidden><summary id="graph-unresolved-title">未解析引用</summary><ul id="graph-problems"></ul></details>
         <details id="graph-warnings" hidden><summary>读取警告</summary><ul id="graph-warning-list"></ul></details>
       </section>
-      <footer>EVOKBASE <span>让知识回到日常。</span></footer>
+      <footer><span>EvoKBase / 个人知识工作台</span><span>收集 · 理解 · 复用</span></footer>
     </section>
   </main>
 </body>
