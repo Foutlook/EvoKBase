@@ -68,10 +68,26 @@ test('取消和超时终止进程；配置轮换丢弃结果；运行期间不�
   while(true){try{await fs.stat(capture);break;}catch{await new Promise(r=>setTimeout(r,15));}}
   const data=JSON.parse(await fs.readFile(config.harnesses.file,'utf8'));data.version='rotated';await fs.writeFile(config.harnesses.file,JSON.stringify(data));
   await assert.rejects(running,{status:409});
+  await assert.rejects(models.generate({provider:'codex',version:(await models.state()).version},[{role:'user',content:'有界处理'}],undefined,50),{status:504});
   const command={program:process.execPath,prefix:[]};
   await assert.rejects(runProcess(command,['-e','setInterval(()=>{},1000)'],{timeoutMs:50}),{status:504});
   const controller=new AbortController(), pending=runProcess(command,['-e','setInterval(()=>{},1000)'],{signal:controller.signal});controller.abort();await assert.rejects(pending,{status:499});
   await assert.rejects(runProcess(command,['-e','process.stdout.write("x".repeat(4096))'],{maxBytes:100}),{status:502});
+});
+
+test('仅原生上下文失败可触发分段，JSON错误跨输出块可识别，正文和其他失败不误判',async()=>{
+  const command={program:process.execPath,prefix:[]};
+  const failed={type:'turn.failed',error:{message:'Your input exceeds the context window of this model. synthetic-private'}};
+  for(const exitCode of [0,1]) await assert.rejects(runProcess(command,['-e',`process.stdout.write(${JSON.stringify(JSON.stringify(failed))});process.exitCode=${exitCode}`],{jsonEvents:true}),error=>error.code==='CONTEXT_WINDOW_EXCEEDED' && !error.message.includes('synthetic-private'));
+  await assert.rejects(runProcess(command,['-e',`process.stderr.write('dsh: CONTEXT_WINDOW_');setTimeout(()=>{process.stderr.write('EXCEEDED synthetic-private');process.exitCode=1},20)`]),{code:'CONTEXT_WINDOW_EXCEEDED'});
+  await assert.rejects(runProcess(command,['-e',`console.error('模型思考 context_length_exceeded');console.error('dsh: NETWORK: unavailable');process.exitCode=1`]),{status:502});
+  for(const message of ['401 unauthorized','request too large','input exceeds maximum allowed value']) {
+    await assert.rejects(runProcess(command,['-e',`console.log(${JSON.stringify(JSON.stringify({type:'turn.failed',error:{message}}))});process.exitCode=1`],{jsonEvents:true}),error=>error.status===502 && !error.code);
+  }
+  const prose=JSON.stringify({type:'item.completed',item:{text:'context_length_exceeded'}});
+  await assert.rejects(runProcess(command,['-e',`console.log(${JSON.stringify(prose)});process.exitCode=1`],{jsonEvents:true}),{status:502});
+  const recovered=JSON.stringify(failed)+'\n'+JSON.stringify({type:'turn.completed'});
+  assert.equal(await runProcess(command,['-e',`process.stdout.write(${JSON.stringify(recovered)})`],{jsonEvents:true}),recovered);
 });
 
 test('HTTP只接收同源选择；旧供应商写入失败；固定测试运行本地进程',async t=>{

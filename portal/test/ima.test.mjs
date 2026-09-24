@@ -87,9 +87,9 @@ test('IMA 入口要求同源显式操作，响应不暴露凭据，配置缺失�
   assert.equal((await fetch(url+'/api/ima',{method:'POST',headers:{'Content-Type':'application/json',Origin:url,'X-EvoKBase-Request':'1'},body:JSON.stringify({x:'x'.repeat(17000)})})).status,413);
 });
 
-test('IMA 页面仅显式搜索和选择后导入，翻页不会预读正文且未保存草稿受保护',async()=>{
+test('IMA 来源和知识库联动加载，搜索翻页不预读正文且未保存草稿受保护',async()=>{
   const nodes=new Map(), requests=[];
-  let updateJob;
+  let updateJob, pendingRead;
   const node=id=>{
     if(!nodes.has(id)) nodes.set(id,{value:'',events:{},children:[],addEventListener(name,fn){this.events[name]=fn;},replaceChildren(...children){this.children=children; this.value=children[0]?.value??'';},append(...children){this.children.push(...children);},focus(){}});
     return nodes.get(id);
@@ -107,18 +107,32 @@ test('IMA 页面仅显式搜索和选择后导入，翻页不会预读正文且�
       if(body?.action==='knowledge') data={items:[{title:'个人文件',kind:'media',token:'file'},{title:'目录',kind:'folder',token:'folder'}],nextToken:'next',scope:'个人收藏'};
       if(body?.action==='page') data={items:[{title:'第二页',kind:'media',token:'file2'}],nextToken:null,scope:'个人收藏'};
     }
+    if(pendingRead && body?.action===pendingRead.action) return pendingRead.response;
     return {ok:true,json:async()=>data};
   }});
   const code=(await fs.readFile(new URL('../web/imports.js',import.meta.url),'utf8')).replace('export function','function');
+  node('ima-source').value='knowledge';
   vm.runInContext(code+'\nvar page=initImports("ima");',context);
-  await context.page.refresh(); assert.ok(requests.every(item=>!item.body));
+  await context.page.refresh(); assert.deepEqual(requests.filter(item=>item.body).map(item=>item.body.action),['libraries']);
+  assert.equal(node('ima-library').children[1].text,'个人收藏 · 个人知识库');
+  node('ima-source').value='notes'; await node('ima-source').events.change();
   assert.equal(node('import-form').hidden,true);
   node('ima-query').value='笔记'; await node('ima-form').events.submit({preventDefault(){}});
   await node('ima-next').events.click(); assert.equal(requests.at(-1).body.start,20); assert.equal(node('ima-next').disabled,true);
   assert.equal(node('ima-results').children[0].children[0].type,'radio');
   assert.equal(node('ima-results').children[0].children[1].children[0].textContent,'笔记');
-  node('ima-results').events.change({target:{value:'selection'}}); node('ima-category').value='测试';
-  await node('ima-import').events.click(); assert.equal(requests.filter(item=>item.body?.action==='import').length,1);
+  node('ima-results').events.change({target:{value:'selection'}});
+  let finishImport;
+  pendingRead={action:'import',response:new Promise(resolve=>{finishImport=resolve;})};
+  const pendingImport=node('ima-import').events.click(); await Promise.resolve();
+  assert.equal(requests.find(item=>item.body?.action==='import').body.category,undefined,'无需先填写分类即可导入');
+  assert.equal(node('import-progress').hidden,false); assert.match(node('import-progress-title').textContent,/正在从 IMA 导入/);
+  assert.equal(node('ima-import').disabled,true); assert.equal(node('import-step-1').ariaCurrent,'step');
+  finishImport({ok:false,json:async()=>({error:'导出失败，请重试'})}); await pendingImport; pendingRead=null;
+  assert.equal(node('import-progress-title').textContent,'导入未完成'); assert.match(node('ima-import-feedback').textContent,/导出失败/);
+  assert.equal(node('ima-import').disabled,false);
+  await node('ima-import').events.click(); assert.equal(requests.filter(item=>item.body?.action==='import').length,2);
+  assert.equal(node('import-progress-title').textContent,'资料已导入，尚未整理');
   assert.equal(node('import-download').textContent,'下载接口纯文本快照（不含附件）');
   await node('import-check-update').events.click();
   assert.deepEqual(requests.at(-1).body,{action:'check-update',id:'draft',version:'v1'});
@@ -133,10 +147,12 @@ test('IMA 页面仅显式搜索和选择后导入，翻页不会预读正文且�
   await node('ima-form').events.submit({preventDefault(){}}); assert.equal(requests.length,count);
   node('ima-query').events.input(); assert.equal(node('ima-next').disabled,true); assert.equal(node('ima-import').disabled,true);
   node('import-card').value=job.card;
-  node('ima-source').value='knowledge'; node('ima-source').events.change(); assert.equal(node('ima-knowledge').hidden,false);
-  await node('ima-libraries-load').events.click(); assert.equal(node('ima-library').children[1].text,'个人收藏 · 个人知识库');
-  node('ima-library').value='personal'; node('ima-library').events.change(); node('ima-query').value='';
-  await node('ima-form').events.submit({preventDefault(){}}); assert.equal(requests.at(-1).body.token,'personal');
+  node('ima-source').value='knowledge'; await node('ima-source').events.change(); assert.equal(node('ima-knowledge').hidden,false);
+  assert.equal(requests.at(-1).body.action,'libraries'); assert.equal(node('ima-library').children[1].text,'个人收藏 · 个人知识库');
+  node('ima-query').value='旧关键词'; node('ima-library').value='personal'; await node('ima-library').events.change();
+  assert.deepEqual(requests.at(-1).body,{action:'knowledge',token:'personal',query:''});
+  node('ima-query').value='个人'; node('ima-query').events.input();
+  await node('ima-form').events.submit({preventDefault(){}}); assert.equal(requests.at(-1).body.query,'个人');
   await node('ima-next').events.click(); assert.equal(requests.at(-1).body.token,'next'); assert.equal(node('ima-next').disabled,true);
   await node('ima-prev').events.click(); assert.equal(requests.at(-1).body.action,'knowledge');
   node('ima-results').events.change({target:{value:'folder'}}); assert.equal(node('ima-import').textContent,'打开文件夹 →');
@@ -148,6 +164,21 @@ test('IMA 页面仅显式搜索和选择后导入，翻页不会预读正文且�
   assert.match(node('import-update-status').textContent,/标题：旧标题 → 新标题/);
   assert.match(node('import-update-status').textContent,/原件字节未变化/);
   node('ima-query').events.input(); assert.equal(node('ima-import').disabled,true); assert.equal(node('ima-results').children.length,0);
+  let finishRead;
+  pendingRead={action:'knowledge',response:new Promise(resolve=>{finishRead=resolve;})};
+  const oldRead=node('ima-form').events.submit({preventDefault(){}});
+  assert.equal(node('ima-library').disabled,false,'读取资料时仍可切换知识库');
+  pendingRead=null; node('ima-library').value='other'; await node('ima-library').events.change();
+  const latestStatus=node('ima-status').textContent;
+  finishRead({ok:true,json:async()=>({items:[{title:'过时资料',token:'obsolete',kind:'media'}],nextToken:null})}); await oldRead;
+  assert.equal(node('ima-status').textContent,latestStatus); assert.equal(node('ima-results').children[0].children[1].children[0].textContent,'个人文件');
+  pendingRead={action:'libraries',response:new Promise(resolve=>{finishRead=resolve;})};
+  const oldLibraries=node('ima-libraries-load').events.click();
+  node('ima-source').value='notes'; await node('ima-source').events.change(); const notesStatus=node('ima-status').textContent;
+  finishRead({ok:false,json:async()=>({error:'过时错误'})}); await oldLibraries; pendingRead=null;
+  assert.equal(node('ima-status').textContent,notesStatus); assert.equal(node('ima-query').disabled,false);
+  node('ima-source').value='knowledge'; await node('ima-source').events.change();
+  const beforeBlank=requests.length; node('ima-library').value=''; await node('ima-library').events.change(); assert.equal(requests.length,beforeBlank);
   requests.length=0;
   vm.runInContext('var localPage=initImports("local");',context);
   await context.localPage.refresh(); assert.equal(node('import-form').hidden,false);

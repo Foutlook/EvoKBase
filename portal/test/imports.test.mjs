@@ -37,7 +37,7 @@ test('未保存导入草稿保留在页面，刷新和切换不能覆盖', async
   const nodes = new Map(), listeners = {}, requests = [];
   let finishSave, finishLoad, delayLoad = false;
   const node = id => {
-    if (!nodes.has(id)) nodes.set(id,{value:'',events:{},addEventListener(name,fn){this.events[name]=fn;},replaceChildren(){},append(){}});
+    if (!nodes.has(id)) nodes.set(id,{value:'',events:{},focus(){},addEventListener(name,fn){this.events[name]=fn;},replaceChildren(){},append(){}});
     return nodes.get(id);
   };
   const job = {id:'sample',title:'样本',stage:'draft',version:'v1',target:'00_资源库/外部资料/样本',card:'原草稿',warnings:[],outputs:[]};

@@ -72,7 +72,9 @@ test('导入 HTTP 自动处理、同源限制、可核对旧知识、持久化�
 test('模型候选必须有原文与真实参考依据；未知决策、伪造摘录与超量拒绝',()=>{
   const refs=[{id:'R1',content:oldContent}];
   assert.deepEqual(parseCandidates(JSON.stringify(result),content,refs),result);
-  for(const change of [r=>r.candidates[0].sourceQuote='并不存在的内容',r=>r.candidates[0].evidence[0].quote='伪造旧知识',r=>r.candidates[0].evidence=[],r=>r.candidates[0].action='publish',r=>r.candidates=Array(4).fill(r.candidates[0])]) {
+  const extended={...result,candidates:Array.from({length:12},(_,i)=>({...result.candidates[0],title:'知识点 '+i}))};
+  assert.equal(parseCandidates(JSON.stringify(extended),content,refs).candidates.length,12);
+  for(const change of [r=>r.candidates[0].sourceQuote='并不存在的内容',r=>r.candidates[0].evidence[0].quote='伪造旧知识',r=>r.candidates[0].evidence=[],r=>r.candidates[0].action='publish',r=>r.candidates=Array(2000).fill(r.candidates[0])]) {
     const copy=structuredClone(result); change(copy); assert.throws(()=>parseCandidates(JSON.stringify(copy),content,refs),{status:502});
   }
 });
@@ -99,21 +101,85 @@ test('版本变更、取消、旧知识变更与进程中断不会改写原件�
   assert.equal((await createProcessing(imports,models,search,library).state(job.id)).status,'interrupted');
 });
 
-test('超长资料、搜索失败及旧模型配置不得发送正文；失败仍保留导入',async t=>{
+test('长文完整发送；搜索失败及旧模型配置不得发送正文；失败仍保留导入',async t=>{
   const {imports,library,models,consent,search}=await fixture(t); let calls=0;
-  const stub={state:()=>models.state(),generate:async()=>{calls++;return JSON.stringify(result);}};
-  const large=await imports.create({...input,base64:Buffer.from('中'.repeat(32001)).toString('base64')});
+  const document=content+'中'.repeat(76000);
+  const stub={state:()=>models.state(),generate:async(_input,messages,_signal,timeoutMs)=>{calls++;assert.equal(timeoutMs,600000);assert.equal(JSON.parse(messages[1].content).document,document);return JSON.stringify(result);}};
+  const large=await imports.create({...input,base64:Buffer.from(document).toString('base64')});
   const processing=createProcessing(imports,stub,search,library);
-  await processing.enqueue(large.id,{...consent,sourceVersion:large.version}); assert.equal((await settled(processing,large.id)).status,'failed'); assert.equal(calls,0);
+  await processing.enqueue(large.id,{...consent,sourceVersion:large.version}); assert.equal((await settled(processing,large.id)).status,'ready'); assert.equal(calls,1);
   const job=await imports.create(input), unavailable=createProcessing(imports,stub,{search:async()=>{throw Error('unavailable');}},library);
-  await unavailable.enqueue(job.id,{...consent,sourceVersion:job.version}); assert.equal((await settled(unavailable,job.id)).status,'failed'); assert.equal(calls,0);
+  await unavailable.enqueue(job.id,{...consent,sourceVersion:job.version}); assert.equal((await settled(unavailable,job.id)).status,'failed'); assert.equal(calls,1);
   await assert.rejects(processing.enqueue(job.id,{...consent,modelVersion:'stale',sourceVersion:job.version}),{status:409});
   assert.equal((await imports.preview(job.id)).version,job.version);
 });
 
+test('再次整理会更新旧提炼规则的结果，同一规则与版本则复用',async t=>{
+  const {imports,library,models,consent,search}=await fixture(t); let calls=0;
+  const stub={state:()=>models.state(),generate:async()=>{calls++;return JSON.stringify(result);}};
+  const processing=createProcessing(imports,stub,search,library),job=await imports.create(input),request={...consent,sourceVersion:job.version};
+  await processing.enqueue(job.id,request); const previous=await settled(processing,job.id);
+  assert.ok(previous.recipeVersion);
+  await processing.enqueue(job.id,request); assert.equal(calls,1);
+  const filename=path.join(imports.directory,job.id,'processing.json');
+  const old=JSON.parse(await fs.readFile(filename,'utf8')); delete old.recipeVersion; await fs.writeFile(filename,JSON.stringify(old));
+  await processing.enqueue(job.id,request); const updated=await settled(processing,job.id);
+  assert.equal(updated.status,'ready'); assert.equal(calls,2); assert.notEqual(updated.runId,previous.runId);
+  assert.equal((await imports.preview(job.id)).version,job.version);
+});
+
+test('明确上下文超限后自动分段及合并，文字无损，合并引文核验且显示真实阶段',async t=>{
+  const {imports,library,models,consent,search}=await fixture(t);
+  for(const document of ['# 第一章\r\n'+(content+'\r\n').repeat(80)+'\r\n# 第二章\r\n'+'保留输入的适用条件。\r\n'.repeat(160),'甲😀'.repeat(1001)]) {
+    const calls=[],leafDocuments=[],phases=[];
+    const stub={state:()=>models.state(),generate:async(_input,messages)=>{
+      const payload=JSON.parse(messages[1].content); calls.push(payload); phases.push((await processing.state(job.id)).progress.phase);
+      if(payload.analyses) return JSON.stringify({summary:'合并后的资料摘要',candidates:payload.analyses.flatMap(item=>item.candidates),questions:[]});
+      if(payload.document.length>Math.ceil(document.length*(document.includes('😀')?0.3:0.7))) throw Object.assign(Error('capacity'),{code:'CONTEXT_WINDOW_EXCEEDED'});
+      assert.equal(payload.document.isWellFormed(),true); leafDocuments.push(payload.document);
+      return JSON.stringify({summary:'分段资料摘要',candidates:[{title:'本段要点',claim:'保留原文观点与适用条件。',sourceQuote:payload.document.includes(content)?content:payload.document.includes('保留输入的适用条件。')?'保留输入的适用条件。':'甲😀',action:'uncertain',reason:'仅为原文观点。',evidence:[]}],questions:[]});
+    }};
+    const processing=createProcessing(imports,stub,search,library),job=await imports.create({...input,base64:Buffer.from(document).toString('base64')});
+    await processing.enqueue(job.id,{...consent,sourceVersion:job.version});
+    const ready=await settled(processing,job.id);
+    assert.equal(ready.status,'ready',ready.error); assert.equal(calls[0].document,document);
+    const partCount=document.includes('😀')?4:2;
+    assert.equal(leafDocuments.join(''),document); assert.equal(ready.progress.completedParts,partCount); assert.equal(ready.progress.totalParts,partCount);
+    assert.equal(phases[0],'full'); assert.equal(phases.at(-1),'merging'); assert.equal(phases.filter(phase=>phase==='merging').length,partCount-1); assert.equal(ready.result.candidates.length,partCount);
+    assert.equal((await imports.preview(job.id)).version,job.version);
+  }
+});
+
+test('分段或合并失败、取消及版本变化均不采用部分结果；普通失败不重复调用',async t=>{
+  const {imports,library,models,consent,search}=await fixture(t);
+  const document=(content+'\n').repeat(100);
+  for(const mode of ['failed','cancel','changed','merge','quote','timeout']) {
+    let calls=0;
+    const job=await imports.create({...input,base64:Buffer.from(document).toString('base64')});
+    const stub={state:()=>models.state(),generate:async(_input,messages)=>{
+      calls++;
+      if(mode==='timeout') throw Object.assign(Error('超时'),{status:504});
+      const payload=JSON.parse(messages[1].content);
+      if(payload.document===document) throw Object.assign(Error('capacity'),{code:'CONTEXT_WINDOW_EXCEEDED'});
+      if(calls===2 && mode==='cancel') await processing.cancel(job.id);
+      if(calls===2 && mode==='changed') await imports.update(job.id,{version:job.version,target:job.target,card:job.card+'\n手工修改'});
+      if(calls===3 && mode==='failed') throw Error('第二段失败');
+      if(payload.analyses && mode==='merge') throw Error('合并失败');
+      const output=structuredClone(result);
+      if(payload.analyses && mode==='quote') output.candidates[0].sourceQuote='不在原文的引文';
+      return JSON.stringify(output);
+    }};
+    const processing=createProcessing(imports,stub,search,library);
+    await processing.enqueue(job.id,{...consent,sourceVersion:job.version}); const final=await settled(processing,job.id);
+    assert.equal(final.status,mode==='cancel'?'cancelled':'failed',mode); assert.ok(!final.result,mode);
+    if(mode==='timeout') assert.equal(calls,1); if(mode==='cancel' || mode==='changed') assert.equal(calls,2);
+    const preserved=await imports.preview(job.id); assert.equal(preserved.originalHash,job.originalHash); assert.equal(preserved.card,job.card+(mode==='changed'?'\n手工修改':''));
+  }
+});
+
 test('页面确认后导入自动触发，取消确认不导入，候选不覆盖未保存编辑',async()=>{
   const nodes=new Map(), requests=[]; let confirm=true, processing;
-  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,events:{},addEventListener(name,fn){this.events[name]=fn;},replaceChildren(){},append(){}});return nodes.get(id);};
+  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,events:{},focus(){},addEventListener(name,fn){this.events[name]=fn;},replaceChildren(){},append(){}});return nodes.get(id);};
   const job={id:'fixture',title:'合成资料',version:'v1',stage:'draft',card:'原资料卡',target:'00_资源库/合成/资料',category:'合成',warnings:[],outputs:[]};
   const state={enabled:true,version:'m1',selected:'codex',providers:[{id:'codex',name:'Codex',model:'本地默认',available:true}]};
   const context=vm.createContext({document:{getElementById:node},window:{addEventListener(){},confirm:()=>confirm},Option:function(){},Uint8Array,btoa,

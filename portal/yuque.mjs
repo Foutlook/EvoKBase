@@ -94,7 +94,7 @@ export function createYuque(imports, {filename=path.join(os.homedir(),'.config/e
       if(!auth.token) throw failure(503,'请先配置语雀 Token');
       if(input.version!==auth.version) throw failure(409,'语雀配置已变化，请刷新后重试');
       const document=yuqueDocument(input.url);
-      if(!safeRelative(input.category) || input.category.length>160) throw failure(400,'请选择有效的主题分类');
+      if(input.category!==undefined && input.category!=='' && (!safeRelative(input.category) || input.category.length>160)) throw failure(400,'主题分类无效');
       const data=await request(auth.token,document,signal);
       if(!Number.isSafeInteger(data.id) || data.id<=0 || typeof data.title!=='string' || !data.title.trim() || data.title.length>10000) throw failure(502,'语雀未提供有效文档标识或标题');
       if(!['markdown','lake'].includes(data.format) || typeof data.body!=='string' || !data.body.trim() || data.body.includes('\0') || Buffer.byteLength(data.body)>4*1024*1024) throw failure(422,'仅支持可返回 Markdown 正文的文档（最多 4 MiB）；表格、画板和空正文请从语雀导出后本地导入');

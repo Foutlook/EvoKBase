@@ -44,7 +44,7 @@ export function createModels(config) {
       return (await snapshot()).visible;
     } finally {await lock.close();await fs.unlink(filename+'.lock');}
   }
-  async function generate(input,messages,signal) {
+  async function generate(input,messages,signal,timeoutMs) {
     if(busy) throw failure(409,'已有 Harness 请求正在进行');
     busy=true;
     try {
@@ -52,7 +52,7 @@ export function createModels(config) {
       if(input.version!==visible.version || input.provider!==visible.selected) throw failure(409,'Harness 配置已变化，请重新确认');
       const runtime=runtimes.find(p=>p.id===input.provider);
       if(!runtime?.available) throw failure(409,runtime?.message||'请先选择本地 Harness');
-      const result=await runHarness(runtime,messages,settings,signal);
+      const result=await runHarness(runtime,messages,settings,signal,timeoutMs);
       if((await snapshot()).visible.version!==visible.version) throw failure(409,'运行期间 Harness 配置发生变化，结果未采用');
       return result;
     } finally {busy=false;}

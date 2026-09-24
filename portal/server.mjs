@@ -21,7 +21,7 @@ export async function startPortal(config, port = 4317) {
   const ima = createIma(imports);
   const yuque = createYuque(imports);
   const processing = createProcessing(imports,models,search,library);
-  const review = createReview(imports,processing,library);
+  const review = createReview(imports,processing,library,models);
   async function afterImport(result,input) {
     const job=result.changed?result.job:result.id?result:null;
     if(job && input.processing) {
@@ -53,13 +53,17 @@ export async function startPortal(config, port = 4317) {
       if (req.method === 'POST' && (modelRoute || imaRoute || yuqueRoute || processingRoute || reviewRoute || (imports && /^\/api\/imports(?:\/[a-f\d-]+)?$/.test(url.pathname)))) {
         if (req.headers.origin !== origin || req.headers['x-evokbase-request'] !== '1' || req.headers['content-type'] !== 'application/json') throw failure(403,'写入只接受本机页面的明确操作');
         let size = 0; const chunks = [];
-        for await (const chunk of req) { size += chunk.length; if (size > (reviewRoute?64*1024:modelRoute||imaRoute||yuqueRoute||processingRoute?16*1024:23*1024*1024)) throw failure(413,'请求超过大小限制'); chunks.push(chunk); }
+        for await (const chunk of req) { size += chunk.length; if (size > (reviewRoute?1024*1024:modelRoute||imaRoute||yuqueRoute||processingRoute?16*1024:23*1024*1024)) throw failure(413,'请求超过大小限制'); chunks.push(chunk); }
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw failure(400,'请求不是有效 JSON'); }
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure(400,'请求无效');
         if(reviewRoute) {
           if(!imports) throw failure(503,'未启用资料导入');
           if(!['prepare','confirm'].includes(input.action)) throw failure(400,'不支持的保存操作');
-          return send(200,'application/json; charset=utf-8',JSON.stringify(await review[input.action](url.pathname.split('/')[3],input)));
+          const controller=new AbortController(), cancel=()=>{if(!res.writableEnded) controller.abort();};
+          res.once('close',cancel);
+          if(res.destroyed) controller.abort();
+          try { return send(200,'application/json; charset=utf-8',JSON.stringify(await review[input.action](url.pathname.split('/')[3],input,controller.signal))); }
+          finally { res.removeListener('close',cancel); }
         }
         if(processingRoute) {
           const id=url.pathname.split('/')[3];

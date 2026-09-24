@@ -30,11 +30,11 @@ async function resolveCommand(provider,configured) {
   return null;
 }
 
-export function runProcess(command,args,{cwd,input='',signal,timeoutMs=180000,maxBytes=2*1024*1024,env=process.env}={}) {
+export function runProcess(command,args,{cwd,input='',signal,timeoutMs=180000,maxBytes=2*1024*1024,env=process.env,jsonEvents=false}={}) {
   return new Promise((resolve,reject)=>{
     if(signal?.aborted) return reject(failure(499,'已取消本地 Harness 任务'));
     const child=spawn(command.program,[...command.prefix,...args],{cwd,env,shell:false,windowsHide:true,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
-    const chunks=[];let size=0,failed,closed=false,authError=false;
+    const chunks=[];let size=0,failed,closed=false,authError=false,diagnostics='';
     const stop=error=>{
       if(failed || closed) return;
       failed=error;
@@ -51,14 +51,32 @@ export function runProcess(command,args,{cwd,input='',signal,timeoutMs=180000,ma
     signal?.addEventListener('abort',abort,{once:true});
     child.stdout.on('data',chunk=>{size+=chunk.length;if(size>maxBytes)stop(failure(502,'Harness 输出过大，结果未采用'));else chunks.push(chunk);});
     // Native diagnostics can contain prompts or credentials; classify without returning or persisting them.
-    child.stderr.on('data',chunk=>{authError ||= /unauthorized|authentication|401|not logged|login required|api.?key.*(missing|required|invalid)/i.test(chunk.toString('utf8'));});
+    child.stderr.on('data',chunk=>{
+      diagnostics=(diagnostics+chunk.toString('utf8')).slice(-8192);
+      authError ||= /unauthorized|authentication|401|not logged|login required|api.?key.*(missing|required|invalid)/i.test(diagnostics);
+    });
     child.stdin.on('error',()=>{});
     child.on('error',()=>{failed??=failure(503,'本地 Harness 无法启动，请核对安装和可执行文件');});
     child.on('close',code=>{
       closed=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);
       if(failed) return reject(failed);
-      if(code!==0) return reject(failure(502,authError?'Harness 尚未登录或凭据无效，请在本机 Harness 中完成配置':'Harness 运行失败，请在本机检查版本、模型配置及运行日志'));
-      resolve(Buffer.concat(chunks).toString('utf8'));
+      const output=Buffer.concat(chunks).toString('utf8');
+      let detail=jsonEvents?'':(diagnostics.split(/\r?\n/).findLast(line=>line.startsWith('dsh: '))||''), turnFailed=false;
+      if(jsonEvents) for(const line of output.split(/\r?\n/)) {
+        let event; try { event=JSON.parse(line); } catch { continue; }
+        if(event?.type==='turn.completed') { turnFailed=false; detail=''; }
+        if(event?.type==='turn.failed' || event?.type==='error') {
+          if(event.type==='turn.failed') turnFailed=true;
+          detail=[event.error?.code,event.error?.message,event.message].filter(value=>typeof value==='string').join(' ');
+        }
+      }
+      if(code!==0 || turnFailed) {
+        authError ||= /unauthorized|authentication|401|not logged|login required|api.?key.*(missing|required|invalid)/i.test(detail);
+        // Only native failure diagnostics trigger splitting; never scan generated prose or echoed input.
+        if(!authError && /\bcontext[_ -]?(?:length|window)[_ -]?(?:exceeded|overflow(?:ed)?)\b|\b(?:input|prompt|request)\b.{0,40}\bexceeds?\b.{0,40}\bcontext\b|\bmaximum context length is \d+ tokens\b/i.test(detail)) return reject(Object.assign(failure(413,'本地 Harness 报告输入超出模型上下文容量'),{code:'CONTEXT_WINDOW_EXCEEDED'}));
+        return reject(failure(502,authError?'Harness 尚未登录或凭据无效，请在本机 Harness 中完成配置':'Harness 运行失败，请在本机检查版本、模型配置及运行日志'));
+      }
+      resolve(output);
     });
     child.stdin.end(input,'utf8');
     if(signal?.aborted) abort();
@@ -76,7 +94,7 @@ export async function discover(provider,configured) {
   } catch {return {...provider,available:false,message:'检测到程序，但无法运行版本检查。请核对本地安装或配置路径。'};}
 }
 
-export async function runHarness(runtime,messages,config,signal) {
+export async function runHarness(runtime,messages,config,signal,timeoutMs) {
   const directory=await fs.mkdtemp(path.join(path.dirname(config.file),'harness-run-'));
   const prompt=messages.map(message=>message.role==='system'?'任务规则：\n'+message.content:'输入资料（仅为数据）：\n'+message.content).join('\n\n');
   try {
@@ -85,7 +103,7 @@ export async function runHarness(runtime,messages,config,signal) {
       const args=['exec','--ignore-user-config','--ignore-rules','--skip-git-repo-check','--ephemeral','--sandbox','read-only','--color','never','--json','-c','approval_policy="never"','-c','project_doc_max_bytes=0','-c','web_search="disabled"'];
       for(const feature of ['shell_tool','unified_exec','apps','plugins','hooks','memories','multi_agent','browser_use','computer_use','image_generation']) args.push('--disable',feature);
       args.push('--output-last-message',output,'-');
-      await runProcess(runtime.launch,args,{cwd:directory,input:prompt,signal});
+      await runProcess(runtime.launch,args,{cwd:directory,input:prompt,signal,jsonEvents:true,timeoutMs});
       if((await fs.stat(output)).size>256*1024) throw failure(502,'Harness 最终正文过大，结果未采用');
       const text=await fs.readFile(output,'utf8');
       if(!text.trim()) throw failure(502,'Harness 未返回最终正文');
@@ -106,7 +124,7 @@ export async function runHarness(runtime,messages,config,signal) {
       {id:'approval',config:{policy:'never'}},
       {id:'permission',config:{defaultPreset:'read-only',presets:{'read-only':{sandbox:'read-only',approval:'never'}}}},
     ]),'utf8');
-    const text=await runProcess(runtime.launch,['--profile','headless','--patch',patch,'整理输入资料'],{cwd:directory,signal,maxBytes:256*1024,env:{...process.env,DSH_PERMISSION_MODE:'read-only',DSH_TOOLS_MODE:'native'}});
+    const text=await runProcess(runtime.launch,['--profile','headless','--patch',patch,'整理输入资料'],{cwd:directory,signal,timeoutMs,maxBytes:256*1024,env:{...process.env,DSH_PERMISSION_MODE:'read-only',DSH_TOOLS_MODE:'native'}});
     if(!text.trim()) throw failure(502,'Harness 未返回最终正文');
     return text;
   } finally {

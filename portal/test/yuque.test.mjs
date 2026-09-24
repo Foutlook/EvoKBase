@@ -56,7 +56,7 @@ test('语雀凭据独立存储、版本冲突和环境优先，页面状态不�
 test('语雀正文快照与来源进入原暂存流程，失败不建任务、换凭据中止、不覆盖正式库',async t=>{
   const {filename,store,root}=await fixture(t); let response=document, token='synthetic-token', rotate=false, calls=0;
   const yuque=createYuque(store,{filename,envToken:()=>token,request:async(auth,link)=>{calls++; assert.equal(auth,'synthetic-token'); assert.equal(link.url,documentUrl); if(rotate) token='rotated'; return response;}});
-  const input={action:'import',version:'environment',url:documentUrl+'?secret=discarded#heading',category:'合成分类'};
+  const input={action:'import',version:'environment',url:documentUrl+'?secret=discarded#heading'};
   await assert.rejects(yuque.run({...input,url:'https://evil.invalid/a/b/c'}),{status:400}); assert.equal(calls,0);
   await assert.rejects(yuque.run({...input,category:'../bad'}),{status:400}); assert.equal(calls,0);
   const job=await yuque.run(input);
@@ -65,8 +65,10 @@ test('语雀正文快照与来源进入原暂存流程，失败不建任务、�
   assert.equal((await store.readFile(job.id,'原文.md')).toString(),document.body);
   assert.match(job.card,/语雀 API Markdown 正文快照/); assert.ok(!job.card.includes('IMA')); assert.ok(!JSON.stringify(job).includes('synthetic-token')); assert.ok(!JSON.stringify(job).includes('discarded'));
   assert.ok(!job.html.includes('<script>') && !job.html.includes('<img')); assert.ok(job.warnings.some(w=>w.includes('历史版本')));
-  const handoff=await store.handoff(job.id); assert.ok(handoff.includes(job.version)); assert.match(handoff,/"decision": "pending"/);
-  const restored=await store.preview(job.id); assert.equal(restored.version,job.version);
+  assert.equal(job.category,''); await assert.rejects(store.handoff(job.id),{status:409});
+  const classified=await store.update(job.id,{version:job.version,target:store.resourceRoot+'/合成分类/'+job.target.split('/').at(-1),card:job.card});
+  const handoff=await store.handoff(job.id); assert.ok(handoff.includes(classified.version)); assert.match(handoff,/"decision": "pending"/);
+  const restored=await store.preview(job.id); assert.equal(restored.version,classified.version);
   for(response of [{...document,body:''},{...document,format:'sheet'},{...document,id:null},{...document,body:'---\nslug: fixed\n---\n# 内容'}]) await assert.rejects(yuque.run(input));
   response=document; rotate=true; await assert.rejects(yuque.run(input),{status:409});
   assert.equal((await store.list()).length,1); assert.deepEqual(await fs.readdir(root),['首页.md']);
@@ -102,7 +104,8 @@ test('语雀页面配置清空密钥、只请求语雀、导入前保护未保�
   await context.page.refresh(); assert.equal(node('import-form').hidden,true); assert.equal(node('yuque-fields').disabled,true);
   node('yuque-token').value='synthetic-token'; await node('yuque-config').events.submit({preventDefault(){}});
   assert.equal(node('yuque-token').value,''); assert.equal(node('yuque-fields').disabled,false);
-  node('yuque-url').value=documentUrl; node('yuque-category').value='合成'; await node('yuque-form').events.submit({preventDefault(){}});
+  node('yuque-url').value=documentUrl; await node('yuque-form').events.submit({preventDefault(){}});
+  assert.equal(requests.find(item=>item.body?.action==='import').body.category,undefined);
   assert.equal(node('import-download').textContent,'下载语雀 Markdown 正文快照');
   node('import-card').value='未保存修改'; const count=requests.length;
   await node('yuque-form').events.submit({preventDefault(){}}); assert.equal(requests.length,count);
